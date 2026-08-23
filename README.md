@@ -12,6 +12,7 @@
 | [**collect-resumes**](skills/collect-resumes) | 从邮箱扫描简历邮件，按岗位归档到本地文件夹（附件下载 + 链接类附件抓取 + 多邮件合并 + 薪酬脱敏） | Node.js，配合飞书 mail API |
 | [**analyze-resumes**](skills/analyze-resumes) | 对归档简历做 AI 4维度评估（方向/硬卡/含金量/风险+加分），产出强推/可推/待定/不推四档判定 + 业务推荐摘要 | Python + AI，配合飞书 document_ai |
 | [**daily-recruit-report**](skills/daily-recruit-report) | 每日招聘晨报：每日对账→LLM判读→作战清单→决策落盘，接棒 candidate-nurture | 飞书 hire/im/base API |
+| [**weekly-recruit-report**](skills/weekly-recruit-report) | 每周招聘周报：ATS 拉数核口径→上周计划销账→四问框架（做了什么/发现什么问题/为什么/怎么调整）→ md+docx | 纯文档（prompt 驱动），配合飞书 hire API |
 | [**candidate-entry**](skills/candidate-entry) | 候选人录入飞书招聘：一条命令录人才→建投递→闸门自校验 | 飞书 hire API（notes/_hire.py） |
 | [**schedule-interview**](skills/schedule-interview) | 面试时间协调：批量查面试官空闲，和候选人给定时间求交集，产出可约时段 + 可转发给面试官的确认草稿 | Python，配合飞书 calendar/contact API |
 | [**interview-guide**](skills/interview-guide) | 面试考核维度问答：照公司5张评分表出4轮考察重点+定制问题（行为+情境+简历薄弱点追问） | 纯文档（prompt 驱动） |
