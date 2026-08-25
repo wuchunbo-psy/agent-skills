@@ -106,15 +106,9 @@ agent-skills/
 │   ├── lark-mail/            ← 飞书邮箱 API 契约层
 │   ├── neat-freak/           ← 文档/记忆洁癖审查（纯文档）
 │   └── storage-analyzer/     ← 磁盘占用分析（Python 标准库）
-└── notes/                    ← 招聘主线 skill 共享的核心脚本（数据文件已 gitignore）
-    ├── _lark_shared.py       ← 飞书鉴权 + lark-cli 封装（被所有脚本依赖）
-    ├── _hire.py              ← 候选人录入飞书招聘
-    ├── _daily_review.py      ← 每日对账（ATS→跟踪表同步）
-    ├── _download_chat_file.py← 群聊文件下载
-    ├── _sync_tables.py       ← 表格定时同步
-    ├── refresh_my_jobs.py    ← 岗位范围刷新
-    └── setup_daily_sync.ps1  ← 定时任务安装
 ```
+
+> 注：本仓库不再包含 `notes/` 目录——招聘主线 skill 运行期依赖的核心脚本（`_hire.py`/`_lark_shared.py`/`_daily_review.py` 等）在消费方项目的 `notes/` 下，通过 `PROJECT_ROOT` 注入（见上文环境变量说明）。
 
 ## Skill 规范
 
