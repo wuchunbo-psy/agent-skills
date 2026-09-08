@@ -45,6 +45,10 @@
 
 [**workbench/**](workbench) — 配套的本地 Web 指挥台：把每日对账数据渲染成 **作战 / 管道 / 候选人 / 保温催收** 四页，支持决策与保温触达的写回闭环——不只是看板，是能"看 → 决定 → 记录"的工具。
 
+作战页一览（匿名演示数据出图，更多截图见 [workbench/README.md](workbench/README.md#界面速览)）：
+
+<img src="workbench/screenshots/01-battle.png" width="100%" alt="招聘作战台作战页">
+
 - 单文件前端（vanilla JS，daisyUI/Tailwind 本地化离线可用）+ Node 零依赖后端，仅绑定 127.0.0.1
 - 设计纪律：「晨间纸质作战简报」——为 2 分钟一瞥设计，异常必须长得异常，行动与信息同位
 - 自带三个验收脚本：`_shots.mjs`（四页断言+截图）/ `_probe.mjs`（布局 16 项）/ `_audit.mjs`（对比度/键盘/写回取证），改版必跑全绿——详见 [workbench/AGENTS.md](workbench/AGENTS.md)
