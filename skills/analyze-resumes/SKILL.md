@@ -87,6 +87,9 @@ description: >
 ```bash
 python "…/analyze-resumes/scripts/collect_and_extract.py" \
   --date 8.05 --output-dir notes/_extract_8.05
+# 跨天批次（如 8.24+8.25 一起评）多 --date 一次跑，OCR/渲染模型只加载一次（2026-08-25 提速）：
+python "…/analyze-resumes/scripts/collect_and_extract.py" \
+  --date 8.24 --date 8.25
 ```
 
 脚本自动完成：
@@ -102,7 +105,8 @@ python "…/analyze-resumes/scripts/collect_and_extract.py" \
 **拿到清单后直接读 JSON 进阶段4分析**。清单里的"图片型"和"纯作品集"进兜底区，不硬分析。
 脚本已内置人数清点（输出汇总行），不需要手动交叉比对。
 单份简历需要 `--recovery`（多栏挽救）时，对那一份单独跑 `extract_text.py --recovery`。
-**BOSS 加密 PDF 需单独处理**：collect_and_extract 会自动渲染图片并返回 `render_pages`，但**视觉识别要主会话做**（脚本环境无 MCP 视觉工具）。主会话拿到 render_pages 路径后，用视觉模型逐页读取内容，手动写回 JSON 的 text 字段。
+**BOSS 加密 PDF 需单独处理**：collect_and_extract 会自动渲染图片并返回 `render_pages`，但**视觉识别要主会话做**（脚本环境无 MCP 视觉工具）。主会话拿到 render_pages 路径后，用视觉模型逐页读取内容，手动写回 JSON 的 text 字段。写回后重跑提取不会丢：脚本检测到"本次提取不可读 + JSON 已有非空 text"会自动复用转录（status 显示"复用视觉转录"，2026-09-03 固化），不重复渲染。**⚠️ 先探测本会话有无视觉输入能力（读 1 张图试）——无视觉能力的会话直接把人归入兜底区"需人工看原件"，不要逐页尝试（2026-08-25 教训：3 次读图全部无效上传，白耗数分钟）**。
+**文本输出防乱码**：批量读 JSON 时用小脚本合并落盘 UTF-8 文件再 Read（提取文本可能含 PDF 控制字符，直接 stdout 打印会被判二进制/GBK 乱码，2026-08-25 教训）；合并前用正则 `[\x00-\x08\x0b\x0c\x0e-\x1f]` 清控制字符。
 
 ## 阶段4：逐份分析（主会话直接做，不派 agent）
 
@@ -131,7 +135,7 @@ python "…/analyze-resumes/scripts/collect_and_extract.py" \
 └── 待定·不推/  ← 兜底区文本异常的也放这，标注"需人工看原件"
 ```
 
-分发后跑 `verify_archive.py` 确认份数没丢（闸门已兼容档位子目录，递归计数）。告诉用户各档人数。
+分发后跑 `verify_archive.py <当日批次目录（如 8.21_4份）>` 确认份数没丢（闸门已兼容档位子目录，递归计数）。⚠️ 只传批次目录，**禁止传"已收集简历"根目录**——全量扫历史极慢（2026-08-21 用户投诉）；历史批次冒出的薪酬残留不在本流程修，报告用户即可。告诉用户各档人数。
 
 ## 阶段7：发布飞书文档（评估后必做）
 
@@ -161,6 +165,7 @@ python "…/analyze-resumes/scripts/collect_and_extract.py" \
 - **不要平铺式输出** — 总览表是第一屏，不是按收到顺序逐个罗列。
 - **不要同岗位多人无对比** — 业务一定问"帮我排个序""有什么区别"，必须答。
 - **不要待定判据模糊** — "建议复核"是废话，必须写"差什么信息、看什么就能定"。
+- **不要看视频作品（2026-09-03 用户定稿）** — demo reel/作品视频不抽帧、不读内容、不为看视频装工具（ffmpeg/cv2 等）。归档保留，报告写「视频作品未验证，需业务/美术看原件」+归档路径，不因此落待定；按文本层+其他材料评。
 
 ## 脚本 & 参考
 
@@ -171,4 +176,5 @@ python "…/analyze-resumes/scripts/collect_and_extract.py" \
 | `references/analyze-prompt.md` | 分析维度+落档规则+行家直觉（**每次分析必读**） |
 | `references/output-template.md` | 四层产出格式（**产出时必读**） |
 | `references/publish-lark-doc.md` | 阶段7 飞书发布流程：预处理+鉴权+import+发链接（**发布时必读**） |
+| `references/decisions.md` | 想知道某条规则"为什么存在"时（视觉转录复用等决策与事故记录，不在执行路径上） |
 | `../collect-resumes/references/archive-contract.md` | 归档结构单一真相源 |

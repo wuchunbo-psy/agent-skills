@@ -19,6 +19,7 @@ content_extractors.py — 统一内容提取层
 """
 
 import os
+import re
 
 try:
     import fitz  # PyMuPDF
@@ -52,9 +53,9 @@ class ExtractResult:
 
 
 def _ocr_available():
-    """检查 OCR 后端（tesseract 可执行文件）是否可用。"""
-    import shutil
-    return shutil.which("tesseract") is not None
+    """检查 OCR 后端（tesseract 可执行文件）是否可用。定位单一真相源见 tesseract_path.py。"""
+    from tesseract_path import ocr_available
+    return ocr_available()
 
 
 def extract_pdf(path):
@@ -111,18 +112,33 @@ def _ocr_pdf(path):
     """对图片型 PDF 做 OCR。返回提取文本或 None（失败/不足）。"""
     try:
         import pytesseract
+        from tesseract_path import configure_pytesseract
+        configure_pytesseract(pytesseract)
         from PIL import Image
         import io
 
         doc = fitz.open(path)
         texts = []
-        for pg in doc:
+        # 只 OCR 前 3 页（2026-08-26 尹星海案）：薪酬只出现在简历信息页，作品集页的
+        # 游戏截图数值（伤害/积分 K 值）会让薪酬闸门误报 STOP；与 redact_salary
+        # 默认 --ocr-pages 3 的既有原则对齐。
+        for pg in list(doc)[:3]:
             # 渲染页面为图片
             pix = pg.get_pixmap(dpi=200)
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             texts.append(pytesseract.image_to_string(img, lang="chi_sim+eng"))
         doc.close()
         result = "\n".join(texts)
+        # OCR 噪声行过滤（2026-08-26 尹星海案第二击）：作品集文字被 OCR 揉碎后
+        # （"支持1-3人组队"→"szte1-3 KBPS"）会撞薪酬正则。真薪酬行必有语境关键词，
+        # 无语境的数字+K 行按噪声丢弃（真实脱敏由 redact_salary 负责，闸门只是复核层）。
+        from salary_pattern import SALARY
+        kept = []
+        for ln in result.splitlines():
+            if SALARY.search(ln) and not re.search(r"薪|资|待遇|月薪|年薪|salary", ln, re.I):
+                continue
+            kept.append(ln)
+        result = "\n".join(kept)
         return result if len(result.strip()) >= 20 else None
     except Exception:
         return None

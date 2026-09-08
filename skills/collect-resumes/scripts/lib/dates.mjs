@@ -50,3 +50,26 @@ export function mdd(d) {
 export function recordDate(rec) {
   return parseMailDate(rec?.received_at) || parseMailDate(rec?.created_at) || new Date();
 }
+
+/**
+ * 「归档日」规则（2026-08-21 用户定稿，方便按工作日整理文件夹；同日二次调整 22点→19点）：
+ *   ① 晚上 7 点（19:00）后收到 → 算次日
+ *   ② 周六/周日收到（含规则①推过去落在周末的）→ 算下一个周一
+ * 例：周五 19:30 → +1天=周六 → 跳周一；周日 20:00 → +1=周一；周四 19:30 → 周五。
+ * 只影响**日期段目录名**的推算；received_at 事实字段与 collect 下载 scope
+ * （防漏件要宽口径）不动。
+ */
+export function archiveDate(d) {
+  if (!d) return d;
+  let day = new Date(d);
+  if (day.getHours() >= 19) day = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+  const dow = day.getDay(); // 0=周日 6=周六
+  if (dow === 6) day = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 2);
+  else if (dow === 0) day = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+  return day;
+}
+
+/** 记录的归档日期段名 {M.DD}：recordDate 过 archiveDate 规则（22点后算次日+周末算周一）。 */
+export function archiveDateSegment(rec) {
+  return mdd(archiveDate(recordDate(rec)));
+}

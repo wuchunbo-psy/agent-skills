@@ -28,13 +28,14 @@ node "…/scripts/collect.mjs"                # 今天收到的邮件全流程�
 node "…/scripts/collect.mjs" --backlog      # 清历史积压（下载所有 verified 记录，不限收到日）
 node "…/scripts/collect.mjs" --no-finish    # 只到下载+合并，人工接管脱敏/闸门
 node "…/scripts/collect.mjs" --date 7.29    # 只处理收到日=7.29 的记录（默认今天收到的）
+node "…/scripts/collect.mjs" --max-age-minutes 30   # 同一时间段重复整理时跳过邮件重扫（快照30分钟内直接复用）；⚠️ 用户明确说"刚收到邮件"时不带本参数
 ```
 
 - 退出码：`0`=全绿；`2`=有**新到**人工事项（看汇总）；`1`=流程错误（中止在某阶段）
 - 汇总分两层：**新到（近 7 天收到）完整列出置顶**（含邮件主题+收到时间+已挂天数；挂≥2天会标注催落终态）/ 历史积压报数**附构成分类**（系统邮件/老投递/其他）——exit 2 只由新到事项触发
 - 增量语义：已核查过的邮件自动跳过详情拉取；**首轮运行会对历史邮件做一次性全量核查（约几分钟），属正常**
 - 下载 scope = 指定日（默认今天）∪ 近 7 天 verified 未下载（防深夜邮件/处理滞后滑进积压）；历史全量积压用 `--backlog`
-- 归档目录日期段 = 各记录邮件收到日（历史积压按真实收到日落档，不混进操作日）
+- 归档目录日期段 = **归档日规则推算**（2026-08-21 用户定稿：①19 点后收到算次日 ②周六/周日收到算下一个周一；`dates.mjs archiveDate()` 单一实现）。`received_at` 事实字段不变，collect 下载 scope 用原始日期宽口径防漏件
 - auto 解析有**失败缓存**：解析失败过的记录（`auto_failed_at`）不再每日重试（重试必然再失败）；汇总也不每日重刷。看全量失败用 `--auto --force`
 
 ## Agent 必做的人工环节（collect 汇总之后）
@@ -47,7 +48,7 @@ collect 只自动处理"唯一匹配"，以下决策归 Agent/用户：
      node "…/scripts/resolve_records.mjs" --record <id> --name 张三 \
        --job "项目B工作室/美术端/游戏UI设计师" --filename 张三_游戏UI设计师_5年.pdf
      ```
-     重复投递会自动标 `duplicate` 跳过（⏭️ 正常退出）。
+     重复投递会自动标 `duplicate` 跳过（⏭️ 正常退出）。**同封邮件的第二个附件（简历 PDF + 作品 zip）不算重复投递**——防重按 message_id 区分，同邮件补充材料自动放行（2026-08-25 林秋钰教训），无需 `--new-version`。
    - **候选人是更新版简历**（同名同岗已归档、本次是补充AI版/新版）→ `--new-version` 重开归档，文件名加 `_补充AI版` 等后缀：
      ```
      node "…/scripts/resolve_records.mjs" --record <id> --name 张三 --job "…" \
@@ -58,16 +59,17 @@ collect 只自动处理"唯一匹配"，以下决策归 Agent/用户：
      node "…/scripts/resolve_records.mjs" --exclude <id> --code NOT_RESUME --note "背调材料"
      ```
      常用 code：`NOT_RESUME`（非简历材料）/ `NO_MATERIAL`（取不到材料）/ `IRRELEVANT`（与招聘无关）/ `STALE`（过期投递，岗位已停/太久远）/ `OTHER`
-   - **一封邮件整批排除**（背调材料一封 13-25 个附件）：`--exclude-mail <id1,id2,...> --code NOT_RESUME`（支持逗号分隔多封一次排除）
+   - **一封邮件整批排除**（背调材料一封 13-25 个附件）：`--exclude-mail <id1,id2,...> --code NOT_RESUME`（支持逗号分隔多封一次排除）。⚠️ message_id/record_id 是 40+ 位 base64，**从 manifest 查询取值（命令替换或脚本取），禁止肉眼手抄**——2026-08-21 手抄把 `M` 抄成 `C`（字形相近），排查码点花了 2 分钟
 2. **系统/流程邮件（当场排除，别留给"明天"）**：主题含「视频面试邀约 / 欢迎加入 / 【资料收集】/ 薪酬(学历)资料 / 信息征集 / 信息记录 / 测试题」的邮件是面试流程/入职材料，不是简历投递——读正文确认后**当场** `--exclude-mail NOT_RESUME`。⚠️ 边界：候选人**回信继承通知主题**但带简历附件/链接的，附件/链接核查照常走（这类是真简历，2026-08-14 有静默丢简历事故，见 notifications.mjs 头注释）；只有"无附件且无链接"的纯通知才排除
 3. **⛔ 当日收尾核对（每天 collect 处理完必做，2026-08-18 铁律）**：汇总里"新到待解析/blocked"清零了吗？没清零的每一条都要么 resolve 要么 --exclude **落终态**——决策停在对话里=明天原样再现（姚宇舟 5 条挂 4 天的教训：08-17 说了"已转发相关负责人"却没落盘，08-18 还在干扰）。汇总标注「⏳已挂N天」的就是漏网
 4. **blocked 记录**：`LINK_EXPIRED`（链接失效）→ 联系候选人重发或 `--exclude`；详情拉取失败 → 重跑 collect 自动重试自愈
 5. **闸门 STOP 的目录**：按 verify_archive 输出修复（数量不符/薪酬残留/本批次 blocked），修复后单跑闸门复验
-6. **图片型/乱码 PDF 闸门报"提取阻断"**：先确认文本层确实为空/乱码，再跑
+6. **图片型/乱码 PDF 闸门报"提取阻断"**：
+   **快路径（2026-08-27 用户定稿，主会话首选）**：主会话有视觉能力，`fitz` 渲染候选页 PNG（dpi≥60 保证小字可读）后用 Read **目检薪酬残留**，直接替代 OCR 核查。只看简历信息页（前几页）+ 必要时抽查；目检结论写进交付记录。仅在两种情况才走重流程：①目检发现薪酬→走 `redact_salary.py --vision` 三步流涂白；②评估链路需要文本入库/检索→再跑
    ```
    python "…/scripts/enhance_ocr_pdf.py" <图片型或乱码PDF> [--name 候选人真名]
    ```
-   嵌入 OCR 文本层后重跑闸门；`--name` 纠正 OCR 对生僻字的形近字误识。
+   嵌入 OCR 文本层后重跑闸门；`--name` 纠正 OCR 对生僻字的形近字误识。闸门的"提取阻断"本身是 warning 不阻断，目检通过即可放行。
 
 ### 岗位→工作室归属核对（resolve 前必做）
 
@@ -91,14 +93,18 @@ collect 只自动处理"唯一匹配"，以下决策归 Agent/用户：
 | 2 核查 | `node "…/scripts/verify_mails.mjs" [--date 8.14] [--force]` | 增量（已核查邮件跳过）；`--date` 按邮件收到日过滤；`--force` 全量重拉。通知邮件**不按关键词丢弃**。存量记录自动回填 `received_at` 和 `subject`（按快照邮件）。链接提取覆盖：闭合/无闭合 `<a>`、纯文本裸 URL、img src；兜底关键词含网盘/下载/链接/主页 |
 | 3 解析 | `node "…/scripts/resolve_records.mjs" --auto [--dry-run] [--force]` | 附件类从文件名、**链接类从邮件主题**（「姓名-岗位」模式）提取岗位+姓名，唯一匹配才落盘；歧义保留 needs_resolution。目标目录日期段默认=该记录邮件收到日（`--date` 仅人工显式覆盖）。`--dry-run` 先预览。**失败有缓存**：失败过的不再重试（`--force` 强制全量重试），失败清单只列近 7 天 |
 | 4a 附件下载 | `node "…/scripts/download_attachment.mjs" --pending` 或 `--records id1,id2` | 事务式（.part→校验→原子提交，目标存在绝不覆盖）；**并发 3**（CLI 冷启动占大头，串行慢 3 倍）；限流自动退避重试；完成自动合并推进 archived |
-| 4b 链接下载 | `node "…/scripts/batch_download_links.mjs" --records id1,id2`（不传=全部 verified 链接） | Playwright headless；失效自动标 blocked(LINK_EXPIRED)；完成自动合并。当天收简历**用 --records 精准下**。**大附件（≳50MB）默认不自动下载**：提醒用户手动下载到 Downloads，Agent 走手动归档（见下方"用户手动下载文件的归档"）；仅用户明确让 Agent 下载时才跑本脚本 |
+| 4b 链接下载 | `node "…/scripts/batch_download_links.mjs" --records id1,id2`（不传=全部 verified 链接） | Playwright headless；**反复触发网盘风控页（no_button/下载取消）时加 `BROWSER_HEADED=1` 有头重跑**——真实浏览器指纹过风控，往往一次过（2026-08-27 加）；**下载前自动查 Downloads 本地复用**（链接旁附件名+大小匹配，用户已手动下载的直接归档跳过浏览器，2026-08-20 加）；失效自动标 blocked(LINK_EXPIRED)；完成自动合并。当天收简历**用 --records 精准下**。**大附件（≳50MB）默认不自动下载**：提醒用户手动下载到 Downloads，Agent 走手动归档（见下方"用户手动下载文件的归档"）；仅用户明确让 Agent 下载时才跑本脚本 |
 | 5 合并 | `node "…/scripts/merge_results.mjs"` | 修复工具：中断恢复时手动收尾（常规路径已自动合并；并行收尾禁止，见反模式） |
-| 6 脱敏+闸门 | `python "…/scripts/redact_salary.py" --dir <目录> [--report-json <p.json>]` → `python "…/scripts/verify_archive.py" <目录>` | **先脱敏再闸门**（顺序反了闸门必 STOP）；rar 自动转 zip 并删原包；**`.doc` 自动转 PDF（Word COM / soffice）后脱敏，转换成功自动删原 .doc**；闸门输出 `🟢 全过` 才进评估。批量跑闸门时目录会被自动收敛改名（`_暂定`→`_N份`），报"没找到简历"先 ls 确认实际目录名再重跑 |
+| 6 脱敏+闸门 | `python "…/scripts/redact_salary.py" --dir <目录1> <目录2> …`（**多目录一条命令**，OCR 模型只加载一次，2026-08-25 提速）→ `python "…/scripts/verify_archive.py" <目录1> <目录2> …`（同样多目标一次跑） | **先脱敏再闸门**（顺序反了闸门必 STOP）；rar 自动转 zip 并删原包；**`.doc` 自动转 PDF（Word COM / soffice）后脱敏，转换成功自动删原 .doc**；闸门输出 `🟢 全过` 才进评估。批量跑闸门时目录会被自动收敛改名（`_暂定`→`_N份`），报"没找到简历"先 ls 确认实际目录名再重跑。⚠️ **`<目录>` 只传当日批次目录（如 `8.21_3份` / `8.21_暂定`），禁止传岗位"已收集简历"根目录**——根目录会全量扫历史几十上百个 PDF，分钟级且无必要（2026-08-21 用户投诉）；历史批次冒出的残留不在日常流程修，一句话报告用户即可 |
 
 单文件特殊场景（批量模式覆盖不到时）：
 
 ```
-# 用户手动下载的大附件归档（不跑下载脚本，三步走命令入口，不手改 manifest）：
+# 用户手动下载的大附件归档（不跑下载脚本，三步走命令入口，不手改 manifest）。
+# ⛔ 动手前两项检查（2026-08-20 铁律，两次重复劳动教训）：
+#   ① ls Downloads 确认用户确实已下载（文件名+大小），别盲目等也别重新下载
+#   ② 查目标岗位目录/manifest 有没有同人已归档（李展晴重复件/孙国军重复记录教训：
+#      mv 前对一下 manifest 同名 archived 记录，重复件不入档）
 # 1. mv "Downloads 目录/<原文件>" "<target_dir>/<规范文件名>"
 # 2. 写 notes/_download_results/sha256_<record_id 的 : 换成 _>.result.json
 #    内容: {"record_id":"sha256:...","outcome":"committed","sha256":"<文件哈希>","target_path":"<目标路径>","at":"<ISO时间>"}
@@ -107,8 +113,11 @@ collect 只自动处理"唯一匹配"，以下决策归 Agent/用户：
 python "…/scripts/redact_salary.py" <简历.rar> --output "F:/…/姓名_岗位_年限_简历加作品.zip"
 # 图片型简历（jpg/图片型PDF，7z 包内图片简历先解出）薪酬脱敏一条命令
 python "…/scripts/redact_image_salary.py" <简历.jpg|图片型.pdf>   # 定位命中块→白块→输出验证图复核
-# 图片型 PDF 主会话视觉定位薪酬后传坐标
-python "…/scripts/redact_salary.py" <图片型.pdf> --redact-rects '[{"page":1,"dpi":200,"bbox":[x,y,x,y]}]'
+# 图片型 PDF 视觉协助脱敏（2026-08-27 加；主会话有视觉后推荐：比 OCR 快一个量级，超大图不再卡批）
+# 三步流，闸门已豁免 _vision_定位/ 工作区目录：
+python "…/scripts/redact_salary.py" <图片型.pdf> --vision     # ①渲染各页 PNG + rects 清单模板
+# ②主会话 Read 页图，目测每处薪酬文本的像素 bbox 填进清单（dpi 保持清单值不动，邻居字段务必留在框外）
+python "…/scripts/redact_salary.py" <图片型.pdf> --redact-rects @"<pdf目录>/_vision_定位/<名>_rects.json"
 ```
 
 ---
@@ -141,7 +150,7 @@ python "…/scripts/redact_salary.py" <图片型.pdf> --redact-rects '[{"page":1
 | `…/scripts/batch_download_links.mjs` | 阶段4b 链接类附件 Playwright 批量下载（失效→blocked，自动合并） |
 | `…/scripts/merge_results.mjs` | 阶段5 result.json → manifest 状态推进（修复工具） |
 | `…/scripts/redact_salary.py` | 阶段6a 薪酬脱敏（白色覆盖；PDF/DOCX/.doc/ZIP/RAR；--dir 批量+报告；OCR fallback） |
-| `…/scripts/verify_archive.py` | 阶段6b 归档闸门（数量/薪酬/manifest 闭环阻断；姓名/格式 warning；_暂定→_N份 收敛） |
+| `…/scripts/verify_archive.py` | 阶段6b 归档闸门（数量/薪酬/manifest 闭环阻断；姓名/格式 warning；_暂定→_N份 收敛；**含已收集简历根散落检测**——岗位已收集简历/ 第一层出现简历类文件即 STOP「简历散落未入日期段」，2026-08-20 22 文件散落 5 周事故后加） |
 | `…/scripts/enhance_ocr_pdf.py` | 图片型/乱码 PDF 的 OCR 文本层增强（easyocr；jpg/png 转多页 PDF） |
 | `…/scripts/redact_image_salary.py` | 图片型简历（jpg/png/图片型PDF）薪酬脱敏：OCR 前 N 页定位命中块→白块覆盖→输出验证图（复用 salary_pattern 正则） |
 | `…/scripts/lib/` | 共享模块：manifest（状态机/原子写）、dates（邮件时间判定单一源）、cli_helpers（参数/lark执行器）、retry（限流退避）、file_identity（SHA-256/类型/原子提交）、html_links、lark_mail、notifications（仅展示标签）、paths（路径真相源） |

@@ -261,3 +261,7 @@ download_attachment 的前置自愈没有；且 new-version resolve 成功时不
 
 **4. `redact_image_salary.py` 诞生的 why**
 - 08-19 邓世豪（7z 包内 jpg 简历）走了 6 步人工链（诊断嵌套阻断→解 jpg→转 PDF 绕路→easyocr 定位→视觉多轮确认→rects 涂白），其中 3 步是首次试错浪费。模式与吴雨坤（图片 PDF）同构 → 固化为脚本：复用 salary_pattern 正则判定命中、easyocr 定位、PIL/fitz 白块、输出验证图。easyocr 读不了中文路径（imageio 限制），脚本内先复制 ASCII 临时路径。fitz 的 apply_redactions 是 Page 级方法。
+
+**5. 半加密 BOSS PDF 不再进 OCR 回退（`_is_image_pdf` 的 CJK≥200 快速否决）**
+- why：`_is_image_pdf` 旧逻辑把"可读文本+乱码 token 行混合"的半加密 BOSS PDF 也判成图片型，导致文本层 0 命中的每份 BOSS 简历都白跑一遍"easyocr 模型加载（torch 全量初始化）+渲染 3 页+OCR"——2026-09-02 一批 6 份 BOSS 简历实测每份多耗几十秒、命中全 0。半加密 PDF 的可读文本层已被文本路径全量扫过，OCR 对它没有增量价值（token 化的是姓名/联系方式，不是薪酬）。
+- 保留：纯扫描件（文本<50字符）与全加密 PDF（可读中文≈0，薪酬可能只在渲染层）仍走 OCR——2026-09-03 用曾华强扫描简历实测 OCR 路径行为不变。阈值 200 汉字：真简历正文数千字，远高于噪声。

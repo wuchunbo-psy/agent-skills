@@ -111,3 +111,7 @@ lark-cli calendar +suggestion --user-id ou_xxx --start ISO --end ISO
 | `+rsvp` | 回复事件邀请（accept/decline/tentative） |
 | `+meeting` | 取事件的会议信息（meeting_id / meeting_note） |
 | `+room-find` | 找可用会议室 |
+
+### ⚠️ 负向快照（2026-09-02）：`+agenda --calendar-id <他人的 ou_xxx>` 不可读
+
+报 `191001 invalid calendar_id`——open_id 不能当 calendar_id 用，他人主日历事件标题（summary）拿不到。复测方法：`calendar +agenda --calendar-id ou_53ed9a73... --start <ISO>` 仍报 191001 = 依旧不可读；若某天返回事件 = 权限已放开。要"某面试官某时段是谁的面试"走 ATS 侧：`/hire/v1/interviews` 时间窗 + interview_record_list 过滤（show_availability fetch_interview_labels 已实现）。

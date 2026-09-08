@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>招聘作战台</title>
+<link rel="stylesheet" href="vendor/daisyui.css">
+<style>
+/* ================================================================
+ * 招聘作战台 v4 —— 设计系统
+ * 气质定义句：「晨间的纸质作战简报——墨迹、批注、印章，冷静而果断」
+ * 推导：暖纸底（禁纯白）+ 墨色主色 + 朱砂/赭石/苔绿三个语义点缀；
+ *       层级全靠字号/字重/间距/对齐，区块用微标签+发丝线，不包框卡片；
+ *       标题宋体系展示字体，正文雅黑系高可读，时间数字等宽；
+ *       动效 ≤200ms 仅视线引导。工具：Tailwind(本地vendor)负责布局效率，
+ *       设计令牌全部原生 CSS 变量（OKLCH + color-mix 派生亲缘灰阶）。
+ * ================================================================ */
+:root{
+  /* 纸与墨 */
+  --paper:oklch(97.2% .006 85);        /* 页面底 暖纸 */
+  --paper-2:oklch(99.2% .003 85);      /* 内容面 提亮暖白（非纯白） */
+  --paper-3:oklch(93.5% .01 85);       /* 分组头/悬浮底（v4.2 压深一档拉开层级） */
+  --paper-side:oklch(94% .012 82);     /* 侧栏 压深的纸（v4.2 背景分层） */
+  --paper-side-2:oklch(91.5% .013 82); /* 侧栏交互底 */
+  --ink:oklch(27% .012 75);            /* 主文字与主色 墨 */
+  --ink-hover:oklch(20% .012 75);
+  --ink-2:oklch(46% .013 75);          /* 次 */
+  --ink-3:oklch(52% .012 80);          /* 弱（L 从 0.59 压到 0.52，暖纸底对比度 3.79→≈5.1 达 WCAG AA） */
+  --line:color-mix(in oklch, var(--ink) 11%, var(--paper));
+  --line-2:color-mix(in oklch, var(--ink) 18%, var(--paper));
+  /* 语义三点缀：朱砂 终止/危险 · 赭石 注意/欠账 · 苔绿 通过/就绪 */
+  --seal:oklch(50% .15 30);
+  --ochre:oklch(58% .115 75);
+  --moss:oklch(48% .085 155);
+  /* 工作室色系（v4.2 对比层②）：低饱和归堆标记，色相避开语义三色(30/75/155) */
+  --hue-proja:oklch(50% .085 258);   /* 项目A 靛蓝 */
+  --hue-projb:oklch(48% .075 215);  /* 项目B 蓝青 */
+  --hue-projc:oklch(50% .085 185);   /* 项目C 青 */
+  --hue-chanpin:oklch(50% .07 310);    /* 产品/UGC 堇紫 */
+  --hue-yunying:oklch(56% .06 70);     /* 运营 金褐 */
+  --hue-shequ:oklch(52% .06 330);      /* 社区 品红 */
+  /* 字体 */
+  --f-display:Georgia,'Times New Roman','Source Han Serif SC','Noto Serif SC',SimSun,serif;
+  --f-body:'Segoe UI','Microsoft YaHei UI','Microsoft YaHei',system-ui,sans-serif;
+  --f-num:ui-monospace,'Cascadia Mono',Consolas,'SF Mono',Menlo,monospace;
+  /* daisyUI 主题变量对齐本体系（v4.3 起组件层实际使用：btn/badge/input/tab/alert，
+     语义色与纸墨体系经令牌映射，离线 vendor 生效） */
+  --color-base-100:var(--paper-2);--color-base-200:var(--paper);--color-base-300:var(--paper-3);
+  --color-base-content:var(--ink);--color-primary:var(--ink);--color-primary-content:var(--paper-2);
+  --color-secondary:var(--ink-2);--color-secondary-content:var(--paper-2);
+  --color-accent:var(--ink-3);--color-accent-content:var(--paper-2);
+  --color-neutral:var(--ink);--color-neutral-content:var(--paper-2);
+  --color-success:var(--moss);--color-success-content:var(--paper-2);
+  --color-warning:var(--ochre);--color-warning-content:var(--paper-2);
+  --color-error:var(--seal);--color-error-content:var(--paper-2);
+  --radius-box:.25rem;--radius-field:.25rem;
+}
+/* 复位规则必须住在 @layer base：无层样式会压过 daisyui/utilities 两层，
+   导致按钮配色和 margin/padding 工具类全部失效（ml-auto 实测踩坑） */
+@layer base{
+  *{margin:0;padding:0;box-sizing:border-box}
+  button,input,select{font-family:inherit;color:inherit}
+}
+html{-webkit-text-size-adjust:100%}
+body{
+  font-family:var(--f-body);font-size:15px;line-height:1.6;color:var(--ink);
+  background:var(--paper);
+}
+::selection{background:color-mix(in oklch, var(--ink) 14%, transparent)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:5px;border:2px solid var(--paper)}
+:focus-visible{outline:2px solid var(--ink-3);outline-offset:1px}
+tr[data-act][tabindex]:focus-visible{outline:2px solid var(--ink-2);outline-offset:-2px}
+.ic{width:14px;height:14px;flex:none;vertical-align:-2px}
+
+/* ---------- 侧栏（浅色一体） ---------- */
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:204px;z-index:60;
+  background:var(--paper-side);border-right:1px solid var(--line-2);
+  display:flex;flex-direction:column}
+.sb-brand{padding:22px 18px 18px}
+.sb-title{font-family:var(--f-display);font-size:18px;font-weight:600;letter-spacing:.06em;color:var(--ink)}
+.sb-sub{font-size:9.5px;letter-spacing:.32em;color:var(--ink-3);margin-top:3px;font-weight:600}
+.sb-nav{padding:4px 12px;display:flex;flex-direction:column;gap:2px}
+.sb-nav .btn{justify-content:flex-start;color:var(--ink-2);font-weight:500;font-size:14.5px;text-align:left}
+.sb-nav .btn:hover{background:var(--paper-side-2);color:var(--ink)}
+.sb-nav .btn.on{background:var(--paper-side-2);color:var(--ink);font-weight:650}
+.sb-nav .nbadge{margin-left:auto;font-family:var(--f-num);font-size:12.5px;color:var(--ink-3)}
+.sb-nav .btn.on .nbadge{color:var(--ink-2)}
+.sb-foot{margin-top:auto;padding:14px;border-top:1px solid var(--line)}
+.sbf-row{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2);padding:2.5px 2px}
+.dot{width:6px;height:6px;border-radius:50%;flex:none;display:inline-block}
+.sbf-btn{width:100%;margin-top:10px}
+.sbf-btn.spin svg{animation:rot 1s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+
+/* ---------- 内容区 ---------- */
+.content{margin-left:204px;min-width:0}
+main{padding:26px 44px 100px 36px}
+.page{display:none}.page.on{display:block;animation:fadein .16s ease}
+@keyframes fadein{from{opacity:0;transform:translateY(3px)}to{opacity:1}}
+
+/* 页头 */
+.phead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:6px}
+.ptitle{font-family:var(--f-display);font-size:22px;font-weight:600;letter-spacing:.04em}
+.psub{font-size:13px;color:var(--ink-3);margin-top:4px}
+.pright{display:flex;gap:8px;align-items:center}
+
+/* 正文行：行高≥1.75 的叙述行 */
+.sum{font-size:15px;line-height:1.75;color:var(--ink-2);max-width:78ch;margin:10px 0 4px}
+.sum b{color:var(--ink);font-weight:650;font-family:var(--f-num)}
+.note{font-size:13px;line-height:1.75;color:var(--ink-3);margin:6px 0 2px;max-width:88ch}
+
+/* 区块头：微标签 + 发丝线 */
+.sechead{display:flex;align-items:center;gap:12px;margin:30px 0 4px}
+.mlabel{font-size:12px;font-weight:650;letter-spacing:.14em;color:var(--ink-3);white-space:nowrap}
+.rule{flex:1;height:1px;background:var(--line)}
+.sechead .right{display:flex;gap:10px;align-items:center}
+
+/* 行清单（替代卡片） */
+.rows{border-top:1px solid var(--line)}
+.row{position:relative;display:block;padding:9px 10px 9px 12px;border-bottom:1px solid var(--line);
+  transition:background .14s ease}
+.row:hover{background:color-mix(in oklch, var(--ink) 3%, transparent)}
+.row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:transparent}
+.row.hot::before{background:var(--ochre)}           /* 重点场：赭条 */
+/* 重点场整行强化（1A 规则：非初面整行加粗、保时间序）——赭意底 + 全行字重抬升 */
+.row.hot{background:color-mix(in oklch, var(--ochre) 8%, var(--paper-2))}
+.row.hot:hover{background:color-mix(in oklch, var(--ochre) 11%, var(--paper-2))}
+.row.hot .time{font-weight:700}
+.row.hot .chain,.row.hot .meta{color:var(--ink);font-weight:600}
+.row.hot .chain .cp{color:var(--ink)}
+/* 时段分栏头（上午/下午/傍晚，任何场数都分栏） */
+.sloth{display:flex;align-items:baseline;gap:10px;padding:8px 10px 5px 12px;background:var(--paper-3);
+  font-size:12.5px;font-weight:650;color:var(--ink-2);letter-spacing:.08em}
+.sloth .sl-cnt{font-family:var(--f-num);color:var(--ink-3);font-weight:600}
+.r-seal td:first-child,.row.acc-seal::before{background:var(--seal)}
+.name{font-weight:650;color:var(--ink);cursor:pointer}
+.name:hover{text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+.meta{font-size:13px;color:var(--ink-2)}
+.mut{font-size:13px;color:var(--ink-3)}
+.time{font-family:var(--f-num);font-size:15px;font-weight:600;color:var(--ink)}
+.num{font-variant-numeric:tabular-nums}
+
+/* 轮次文字链 */
+.chain{font-size:13.5px;color:var(--ink-2)}
+.chain .cp{color:var(--ink-2)}
+.chain .cp i{font-style:normal;color:var(--moss);margin-left:1px}
+.chain .cw{color:var(--ochre)}
+.chain .ct{color:var(--ink);font-weight:650}
+
+/* 表格语言 */
+table.tt{width:100%;border-collapse:collapse;font-size:14px}
+table.tt th{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink-3);text-align:left;
+  padding:8px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+table.tt td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.tt tbody tr{transition:background .14s}
+table.tt tbody tr:hover{background:color-mix(in oklch, var(--ink) 3%, transparent)}
+table.tt tr.grp td{background:var(--paper-3);font-weight:650;font-size:13.5px;color:var(--ink);padding:7px 10px}
+table.tt tr.subh td{padding:6px 10px 4px 26px;font-size:13px;font-weight:650;color:var(--ink-2);border-bottom:none}
+tr.acc-seal td:first-child{box-shadow:inset 2px 0 0 var(--seal)}
+tr.acc-ochre td:first-child{box-shadow:inset 2px 0 0 var(--ochre)}
+/* v4.2 状态色加重：风险行整行轻染（≤6% 透明度，保持纸感） */
+tr.acc-seal td{background:color-mix(in oklch, var(--seal) 5%, transparent)}
+tr.acc-ochre td{background:color-mix(in oklch, var(--ochre) 6%, transparent)}
+table.tt tbody tr.acc-seal:hover td{background:color-mix(in oklch, var(--seal) 8%, transparent)}
+table.tt tbody tr.acc-ochre:hover td{background:color-mix(in oklch, var(--ochre) 9%, transparent)}
+/* 工作室归堆标记：矩阵卡片左条 / 候选人页分组头左条（色值由 .lane/.grp 行内 --st-hue 注入） */
+.kcard{box-shadow:inset 2px 0 0 var(--st-hue, transparent)}
+tr.grp td:first-child{box-shadow:inset 3px 0 0 var(--st-hue, transparent)}
+
+/* ---------- 组件层（v4.3：daisyUI btn/badge/input/tab/alert + 本系微调） ---------- */
+.btn{font-family:inherit;font-weight:600}
+.btn:focus-visible{outline:2px solid var(--ink-3);outline-offset:1px}
+.btn .ic{width:13px;height:13px}
+/* 抽屉属性行（v4.3 补齐：此前 .dw-row 无样式裸堆） */
+.dw-row{display:flex;gap:14px;padding:5.5px 0;font-size:13.5px;border-bottom:1px dashed var(--line)}
+.dw-row .k{flex:none;width:78px;color:var(--ink-3);font-size:12.5px;padding-top:1px}
+.dw-row .v{min-width:0;flex:1;color:var(--ink);line-height:1.6}
+
+/* 微日历 */
+.weekmini{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.wcell{text-align:center;padding:6px 0 5px;border-radius:4px;cursor:pointer;transition:background .14s;border:none;background:none}
+.wcell:hover{background:var(--paper-3)}
+.wcell .wd1{font-size:11.5px;color:var(--ink-3)}
+.wcell .wd2{font-family:var(--f-num);font-size:15px;font-weight:600;color:var(--ink-2);margin-top:1px}
+.wcell.sel .wd2{color:var(--ink);font-weight:700;box-shadow:0 2px 0 var(--ink);display:inline-block;padding:0 3px}
+.wcell .wd3{font-family:var(--f-num);font-size:12.5px;margin-top:2px;color:var(--ink-3)}
+.wcell .wd3.has{color:var(--ink);font-weight:700}
+
+/* 泳道看板 */
+.lane{margin-top:26px}
+.lane-h{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+.lane-h h3{font-family:var(--f-display);font-size:16px;font-weight:600;letter-spacing:.03em}
+.board{display:grid;border:1px solid var(--line);border-radius:4px;background:var(--line);gap:1px;
+  grid-template-columns:172px repeat(6,minmax(104px,1fr))}
+.colh{background:var(--paper);padding:7px 6px 0;text-align:center}
+.colh .cl{font-size:12px;font-weight:650;letter-spacing:.1em;color:var(--ink-2)}
+.colh .band{height:3px;margin-top:5px;border-radius:2px 2px 0 0}
+.colh-corner{background:var(--paper)}
+.cell{background:var(--paper);min-height:46px;padding:6px;display:flex;flex-direction:column;gap:4px;align-items:stretch}
+/* 岗位行头（v4.2 矩阵：行=岗位） */
+.jrow-h{background:var(--paper);padding:6px 12px;display:flex;flex-direction:column;justify-content:center;gap:2px}
+.jrow-h .jn{font-size:13px;font-weight:650;color:var(--ink);line-height:1.35}
+.jrow-h .jc{font-family:var(--f-num);font-size:11.5px;color:var(--ink-3);font-weight:600}
+/* 待排初试标注（未进面试流程者不入矩阵） */
+.prescr{margin-top:7px;font-size:12.5px;color:var(--ink-2);display:flex;gap:7px;align-items:baseline;flex-wrap:wrap}
+.kcard{background:var(--paper-2);border:1px solid var(--line);border-radius:4px;padding:5px 7px;
+  cursor:pointer;transition:border-color .14s ease,transform .14s ease;text-align:left;width:100%}
+.kcard:hover{border-color:var(--line-2);transform:translateY(-1px)}
+.kcard .kn{font-size:14px;font-weight:650;color:var(--ink);display:flex;align-items:center;gap:5px}
+.kcard .kj{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+
+/* 折叠区（v4.3 按钮体走 daisyUI btn-ghost，此处仅留布局） */
+.fold-b{display:none}.fold-b.open{display:block}
+
+/* 抽屉 */
+#drawerMask{position:fixed;inset:0;background:rgba(28,25,23,.32);z-index:90;opacity:0;pointer-events:none;transition:.2s}
+#drawerMask.on{opacity:1;pointer-events:auto}
+#drawer{position:fixed;top:0;right:-480px;width:460px;max-width:94vw;height:100vh;background:var(--paper-2);
+  z-index:95;box-shadow:-12px 0 44px rgba(28,25,23,.16);transition:right .2s ease;display:flex;flex-direction:column}
+#drawer.on{right:0}
+
+/* toast */
+#toasts{position:fixed;bottom:26px;left:calc(204px + (100vw - 204px)/2);transform:translateX(-50%);
+  z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center}
+/* toast 容器定位保留；视觉体走 daisyUI alert */
+.toast{animation:tin .18s ease;display:flex;gap:8px;align-items:center;max-width:60vw}
+@keyframes tin{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+
+/* 两栏（作战页） */
+.bgrid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:48px;align-items:start}
+.rail-block{margin-bottom:26px}
+.risk-row{display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;text-align:left;
+  padding:7px 4px;cursor:pointer;font-size:13.5px;color:var(--ink-2);border-bottom:1px solid var(--line)}
+.risk-row:hover{color:var(--ink);background:color-mix(in oklch, var(--ink) 3%, transparent)}
+.risk-row .cnt{margin-left:auto;font-family:var(--f-num);font-weight:700;color:var(--ink)}
+
+.filterbar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:14px 0 6px}
+
+@media(max-width:1180px){
+  :root{}
+  .bgrid{grid-template-columns:1fr}
+  .rail{order:-1}
+}
+@media(max-width:900px){
+  .content{margin-left:0}
+  .sidebar{display:none}
+  #toasts{left:50vw}
+  main{padding:18px 16px 80px}
+}
+</style>
+</head>
+<body>
+
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 图标数据取自 Iconify Lucide 开源集，仅语义位使用 -->
+  <symbol id="i-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="M15.5 10.5l6-3.5v10l-6-3.5z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4.5 12.5l5 5 10-11"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-2.6-6.3M21 3v6h-6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3L1.8 20.2h20.4z"/><path d="M12 10v4.5M12 17.6v.4"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 5l14 14M19 5L5 19"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4.2"/><path d="M4 20.5c1.6-3.6 4.5-5.3 8-5.3s6.4 1.7 8 5.3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></symbol>
+  <symbol id="i-lane" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></symbol>
+  <symbol id="i-building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h1.5M13.5 7H15M9 11h1.5M13.5 11H15M9 15h1.5M13.5 15H15"/></symbol>
+  <symbol id="i-msg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 01-9 8.4 9.6 9.6 0 01-2.8-.4L3 21l1.6-4.2A8.2 8.2 0 013 11.5a8.4 8.4 0 019-8.4 8.4 8.4 0 019 8.4z"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.5L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.5-6.5A2 2 0 0016.7 4H7.3a2 2 0 00-1.8 1.5z"/></symbol>
+</svg>
+
+<aside class="sidebar">
+  <div class="sb-brand">
+    <div class="sb-title">招聘作战台</div>
+    <div class="sb-sub">RECRUIT CONSOLE</div>
+  </div>
+  <nav class="sb-nav" id="nav"></nav>
+  <div class="sb-foot">
+    <div id="sbStatus"></div>
+    <button class="sbf-btn btn btn-outline btn-sm w-full" id="btnRefresh" title="重新对账（拉取最新 ATS 数据）">
+      <svg class="ic"><use href="#i-refresh"/></svg><span class="lbl2">立即对账</span></button>
+  </div>
+</aside>
+
+<div class="content">
+  <div id="banner" style="display:none;padding:14px 44px 0 36px"></div>
+  <main>
+    <section class="page" id="page-battle"></section>
+    <section class="page" id="page-pipeline"></section>
+    <section class="page" id="page-candidates"></section>
+    <section class="page" id="page-nurture"></section>
+  </main>
+</div>
+
+<div id="drawerMask"></div>
+<aside id="drawer"></aside>
+<div id="toasts"></div>
+<div id="errBox" class="alert alert-error py-2 px-4 text-[13px] font-semibold"
+  style="display:none;position:fixed;left:12px;bottom:12px;z-index:300;max-width:60vw"></div>
+
+<script src="vendor/tw.browser.js"></script>
+<script>
+'use strict';
+/* ================================================================
+ * 招聘作战台 v4 —— 与 skill 相互独立的独立工作台。
+ * 只依赖 notes/ 三契约文件；写回由本地服务自包含实现。
+ * ================================================================ */
+
+// ---------- 工具 ----------
+const $ = (s, p) => (p || document).querySelector(s);
+const $$ = (s, p) => Array.from((p || document).querySelectorAll(s));
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ic = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
+const fmtHM = (iso) => (iso && iso.length >= 16) ? iso.slice(11, 16) : '--:--';
+const dateKey = (iso) => (iso || '').slice(0, 10);
+const WD = ['周日','周一','周二','周三','周四','周五','周六'];
+const pad2 = (n) => String(n).padStart(2, '0');
+function localToday(){ const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function dot(c){ return `<i class="dot" style="background:${c}"></i>`; }
+function emptyBox(icon, msg, sub){
+  return `<div class="py-6 px-2 text-center">
+    <div class="text-[color:var(--ink-3)]">${ic(icon)}</div>
+    <div class="mt-1.5 text-[color:var(--ink-2)] font-semibold text-sm">${msg}</div>
+    ${sub?`<div class="note" style="margin-top:2px">${sub}</div>`:''}</div>`;
+}
+
+let COPY_SEQ = 0; const COPY_TEXTS = {};
+function regCopy(text){ const id = 'c' + (++COPY_SEQ); COPY_TEXTS[id] = text; return id; }
+async function copyById(id){
+  const t = COPY_TEXTS[id] || '';
+  try { await navigator.clipboard.writeText(t); toast('已复制到剪贴板', 'ok'); }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = t; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove(); toast('已复制到剪贴板', 'ok');
+  }
+}
+function toast(msg, type){
+  const d = document.createElement('div');
+  d.className = 'toast alert shadow-lg text-sm font-semibold' +
+    (type === 'ok' ? ' alert-success' : type === 'err' ? ' alert-error' : ' alert-neutral');
+  d.innerHTML = (type === 'ok' ? ic('check') : type === 'err' ? ic('alert') : '') + esc(msg);
+  $('#toasts').appendChild(d);
+  setTimeout(() => { d.style.opacity = '0'; d.style.transition = '.3s'; setTimeout(() => d.remove(), 320); }, 2600);
+}
+async function post(url, body){
+  try {
+    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {}) });
+    return await r.json();
+  } catch (e) {
+    return { code: 0, msg: '网络异常：' + (e && e.message || e) + '——本地服务可能没在跑（node workbench/server.mjs）' };
+  }
+}
+
+// ---------- 全局状态 ----------
+let DATA = null, IDX = null, ROUTE = 'battle';
+let WEEK_SEL = null, CF = { dept:'', risk:false, q:'' }, refreshing = false, DW_TID = null;
+const OPEN = new Set();   // 右辅栏/折叠区展开状态
+
+// 六档阶段（v4.2：初筛列移除——人都通过初筛/评估才进管道，放这列是误导；未进面试流程者在泳道下方标注）
+const STAGES = ['初试','复试','终试','HR面','Offer','待入职'];
+// 泳道列头渐进墨阶（v4.2 加重）：前四档由墨色透明度递进，Offer/待入职用苔绿点缀
+const BANDS = [
+  'color-mix(in oklch, var(--ink) 14%, transparent)',
+  'color-mix(in oklch, var(--ink) 25%, transparent)',
+  'color-mix(in oklch, var(--ink) 38%, transparent)',
+  'color-mix(in oklch, var(--ink) 52%, transparent)',
+  'var(--moss)',
+  'color-mix(in oklch, var(--moss) 55%, transparent)',
+];
+
+// 工作室色系（v4.2 对比层②）：dept 名包含关键字即命中；未命中落墨灰
+const STUDIO_HUE = {
+  '项目A':'var(--hue-proja)', '项目B':'var(--hue-projb)', '项目C':'var(--hue-projc)',
+  '产品':'var(--hue-chanpin)', '运营':'var(--hue-yunying)', '社区':'var(--hue-shequ)',
+};
+function studioHue(dept){
+  for (const k in STUDIO_HUE) if (String(dept || '').includes(k)) return STUDIO_HUE[k];
+  return 'color-mix(in oklch, var(--ink) 45%, transparent)';
+}
+
+// ---------- 派生索引 ----------
+function buildIdx(){
+  IDX = { byTid:new Map(), depts:[], decisions:new Map(), nurture:new Map(),
+          sigFirst:[], sigLanded:[], rejects:[], nameJob:new Map(),
+          rejTids:new Set(), evalTids:new Set() };
+  const st = DATA?.review?.structured || {};
+  (st.module2 || []).forEach(dep => {
+    const d = { dept: dep.dept, count: dep.count, jobs: [] };
+    (dep.jobs || []).forEach(j => {
+      const jd = { job: j.job, count: j.count, candidates: j.candidates || [] };
+      d.jobs.push(jd);
+      jd.candidates.forEach(c => {
+        IDX.byTid.set(String(c.talent_id), { c, job: jd.job, dept: d.dept });
+        if (!IDX.nameJob.has(c.name)) IDX.nameJob.set(c.name, { job: jd.job, dept: d.dept });
+      });
+    });
+    IDX.depts.push(d);
+  });
+  ((DATA?.signals)?.decisions || []).forEach(dc => { if (dc.talent_id) IDX.decisions.set(String(dc.talent_id), dc); });
+  const nur = DATA?.nurture?.candidates || {};
+  Object.keys(nur).forEach(tid => IDX.nurture.set(String(tid), nur[tid]));
+  ((DATA?.signals)?.signals || []).forEach(sg => {
+    if (sg.type === 'invite') (sg.ats_landed ? IDX.sigLanded : IDX.sigFirst).push(sg);
+    else if (sg.type === 'reject'){ IDX.rejects.push(sg); if (sg.talent_id) IDX.rejTids.add(String(sg.talent_id)); }
+  });
+  ((DATA?.review?.structured?.pending_evaluations) || []).forEach(p => {
+    if (p.talent_id) IDX.evalTids.add(String(p.talent_id));
+  });
+}
+const T = (tid) => IDX.byTid.get(String(tid));
+const decisionOf = (tid) => IDX.decisions.get(String(tid));
+const nurtureOf = (tid) => IDX.nurture.get(String(tid));
+const touchedToday = (tid) => { const n = nurtureOf(tid); return !!n && n.last_touch_date === localToday(); };
+const signalsStale = () => !!DATA?.signals?.date && DATA.signals.date !== localToday();
+
+// 不通过待终止名单（泳道移出项）
+function failedList(){
+  const out = [];
+  IDX.depts.forEach(d => d.jobs.forEach(j => j.candidates.forEach(c => {
+    if (c.failed) out.push({ c, job:j.job, dept:d.dept });
+  })));
+  return out;
+}
+// 风险分组（作战页右辅栏 + 各处复用）
+function riskGroups(){
+  const g = { terminate:[], darkhole:[], eval:[] };
+  IDX.depts.forEach(dep => dep.jobs.forEach(j => j.candidates.forEach(c => {
+    if (c.failed || String(c.stuck_reason||'').includes('不通过')) g.terminate.push({c, dept:dep.dept, job:j.job});
+    else if (String(c.stuck_reason||'').includes('零记录')) g.darkhole.push({c, dept:dep.dept, job:j.job});
+  })));
+  (DATA?.review?.structured?.pending_evaluations||[]).forEach(p => g.eval.push({p}));
+  return g;
+}
+
+// 轮次文字链："初试 ✓ 复试·欠12天 今天·终试"
+function chainText(roundsDisplay, todayRound){
+  const parts = [];
+  String(roundsDisplay || '').split(/\s+/).filter(Boolean).forEach(tok => {
+    if (tok.endsWith('✅')) parts.push(`<span class="cp">${esc(tok.slice(0,-1))}<i>✓</i></span>`);
+    else if (tok.includes('⏳')) parts.push(`<span class="cw">${esc(tok.replace('⏳',''))}</span>`);
+    else parts.push(`<span class="cp">${esc(tok)}</span>`);
+  });
+  if (!parts.length && !todayRound) return '<span class="mut">无面试记录</span>';
+  if (todayRound) parts.push(`<span class="ct">${esc(todayRound)}</span>`);
+  return parts.join(' ');
+}
+function extractRound(r){ const m = /[（(]([^）)]+)[）)]/.exec(r || ''); return m ? m[1] : (r || ''); }
+function dwellTxt(days, flag){
+  const c = flag === '🔴' ? 'var(--seal)' : flag === '🟠' ? 'var(--ochre)' : 'var(--ink-3)';
+  return `<span class="num" style="color:${c};font-weight:${flag?'650':'500'}">${days}天</span>`;
+}
+function conclCell(c){
+  const t = c.latest_conclusion === 1 ? ['通过','var(--moss)']
+    : c.failed ? ['不通过','var(--seal)'] : ['未出','var(--ink-3)'];
+  const strong = t[0] !== '未出';
+  const ev = c.evaluation_conclusion_display ? `<span class="mut">评估:${esc(c.evaluation_conclusion_display)}</span>` : '';
+  return `${dot(t[1])}<span style="margin-left:5px;${strong?`font-weight:650;color:${t[1]};`:''}">${t[0]}</span> ${ev}`;
+}
+
+// ---------- 话术库 ----------
+const Scripts = {
+  urgeInterviewer(interviewer, names, days){
+    const nms = names.join('、');
+    if (days >= 14) return `${interviewer}总，${nms}的面评还没提交，已经${days}天了。候选人那边我有点压不住了，问了好几次。这个候选人之前评价不错，怕拖久流失，能否今天尽快看一下？或者您有什么顾虑直接说，我来判断要不要继续推进。`;
+    if (days >= 4) return `${interviewer}总，${nms}的面试过去${days}天了，候选人那边一直在等结果，担心拖久了有其他选择。方便今天抽空写下评价吗？如果太忙，语音说两句我帮您记录也行～`;
+    return `${interviewer}总，${nms}的面试方便写下面评吗？候选人在等结果，我这边好推进下一步～`;
+  },
+  syncCandidate(name, days){
+    if (days >= 7) return `${name}你好，不好意思让你久等了。你的面试流程目前在内部审批环节，耗时比面试阶段长，我一直在帮你盯着，有结果第一时间同步你🙏`;
+    if (days >= 3) return `${name}你好，今天又跟进了一下你的流程，目前还在推进中，有消息我第一时间联系你～`;
+    return `${name}你好，面试反馈我们在汇总中，预计这两天给你答复，感谢耐心等待～`;
+  },
+  advance(name){ return `${name}你好，你前面的面试通过了🎉 我们正在安排下一轮，预计近期和你确认时间，保持联系～`; },
+  firstContact(name, job){ return `${name}你好，我是迷你玩的招聘负责人，你应聘的「${job}」岗位业务侧看过了，想约你聊聊，你这边最近哪几天方便？我们按你的时间来安排～`; },
+};
+
+// ================================================================
+// 作战页：主栏（今日面试 / 今日邀约）+ 右辅栏（周前瞻 / 异常）
+// ================================================================
+function renderBattle(){
+  const el = $('#page-battle');
+  if (!DATA?.review){ el.innerHTML = emptyData(); return; }
+  const st = DATA.review.structured || {};
+  const todays = (st.today_interviews || []).slice().sort((a,b)=>String(a.time).localeCompare(String(b.time)));
+  const upcoming = st.upcoming_interviews || [];
+  const invites = IDX.sigFirst.length + IDX.sigLanded.length;
+  const rg = riskGroups();
+  const foN = (st.feedback_overdue||[]).length;
+  const riskTotal = rg.terminate.length + rg.darkhole.length + rg.eval.length + IDX.rejects.length;
+
+  // 摘句：今天最重要的一场
+  let headline = '';
+  const hot = todays.find(it => isHotRound(extractRound(it.round)));
+  if (hot) headline = ` —— 重点：${esc(hot.name)} ${fmtHM(hot.time)} ${esc(extractRound(hot.round))}（${esc(hot.job||'')}）`;
+
+  el.innerHTML = `
+    <div class="phead">
+      <div><h1 class="ptitle">作战</h1>
+        <div class="psub num">${esc(DATA.review.date)} ${esc(WD[new Date().getDay()])} · 对账 ${esc(String(DATA.review.generated_at||'').slice(11,16))}${signalsStale()?' · 信号未判读':''}</div></div>
+      <div class="pright"></div>
+    </div>
+    <p class="sum">今日 <b>${todays.length}</b> 场面试 · 待约 <b>${invites}</b> 人 · 异常 <b>${riskTotal + foN}</b> 条${headline}</p>
+
+    <div class="bgrid" style="margin-top:14px">
+      <div>
+        <div class="sechead"><span class="mlabel">今日面试 · ${todays.length} 场</span><span class="rule"></span>
+          <span class="right mut">▍= 复试及以上重点场</span></div>
+        <div class="rows">${todays.length ? ivSlotRows(todays)
+          : emptyBox('cal','今天没有排期','如果不对劲，检查日程同步与 _my_jobs.json 是否过期')}</div>
+
+        <div class="sechead"><span class="mlabel">今日邀约 · ${invites} 人</span><span class="rule"></span>
+          ${signalsStale()?`<span class="right mut">信号仍是 ${esc(DATA.signals.date)} 判读</span>`:''}</div>
+        <div class="rows">${inviteRows()}</div>
+      </div>
+
+      <div class="rail">
+        <div class="rail-block">
+          <div class="sechead" style="margin-top:0"><span class="mlabel">本周前瞻</span><span class="rule"></span></div>
+          ${weekStrip(todays, upcoming)}
+          <div id="dayDetail" style="margin-top:10px"></div>
+        </div>
+        <div class="rail-block">
+          <div class="sechead" style="margin-top:0"><span class="mlabel">异常与风险</span><span class="rule"></span></div>
+          ${railRisks(rg, foN)}
+        </div>
+      </div>
+    </div>`;
+  showDayDetail(WEEK_SEL || localToday());
+}
+function emptyData(){
+  return `<div class="phead"><div><h1 class="ptitle">暂无数据</h1></div></div>
+    <p class="sum">还没有对账数据——点左下角「立即对账」，或确认 notes/_daily_review.json 存在。</p>`;
+}
+
+function isHotRound(r){ return !!r && r !== '初试'; }
+
+// 时段分栏（1A 定稿规则：任何场数按时段分栏，无门槛；栏内保时间序）
+function slotOf(iso){
+  const h = Number(String(iso || '').slice(11, 13));
+  if (isNaN(h)) return '其他';
+  return h < 12 ? '上午' : h < 18 ? '下午' : '傍晚';
+}
+function ivSlotRows(todays){
+  const slots = [['上午', []], ['下午', []], ['傍晚', []], ['其他', []]];
+  todays.forEach(it => { const s = slots.find(x => x[0] === slotOf(it.time)); if (s) s[1].push(it); });
+  return slots.filter(([, arr]) => arr.length)
+    .map(([name, arr]) => `<div class="sloth">${name}<span class="sl-cnt">${arr.length} 场</span></div>${arr.map(ivRow).join('')}`)
+    .join('');
+}
+
+function ivRow(it){
+  const info = T(it.talent_id);
+  const round = extractRound(it.round);
+  const hot = isHotRound(round);
+  const nRound = info ? (info.c.passed_rounds || info.c.interview_count || 0) + 1 : null;
+  const isVideo = String(it.interview_type || '').includes('视频');
+  const chain = info ? chainText(info.c.rounds_display, null)
+    : `<span class="cp">${esc(round)}</span>`;
+  return `<div class="row${hot?' hot':''}">
+    <div class="flex items-baseline gap-[10px]">
+      <span class="time w-[44px] shrink-0">${fmtHM(it.time)}</span>
+      <span class="min-w-0">
+        <span class="name" data-act="open-talent" data-tid="${esc(it.talent_id)}">${esc(it.name)}</span>${
+          hot&&nRound?`<span class="badge badge-ghost badge-sm">第${nRound}轮</span>`:''}
+        <span class="meta ml-[7px]">${esc(it.job||'')}${it.dept?'·'+esc(it.dept):''}</span>
+      </span>
+      <span class="ml-auto whitespace-nowrap mut">
+        ${it.meeting_room?esc(String(it.meeting_room).split(' ')[0]):''}
+        ${ic(isVideo?'video':'building')}<span class="ml-[3px]">${isVideo?'视频':'现场'}</span>
+        ${it.video_url?`<button class="btn btn-ghost btn-xs btn-link" data-act="link" data-url="${esc(it.video_url)}">入会</button>`:''}
+      </span>
+    </div>
+    <div class="pl-[54px] flex items-baseline gap-2">
+      <span class="chain">${chain}</span>
+      <span class="mut">→ ${esc(it.interviewer||'待定')}</span>
+    </div>
+  </div>`;
+}
+
+function inviteRows(){
+  const mk = (sg, landed) => {
+    const tid = String(sg.talent_id || '');
+    const info = T(tid);
+    const job = info?.job || '';
+    const copyId = regCopy(Scripts.firstContact(sg.name, job || '相关岗位'));
+    const done = touchedToday(tid);
+    const dec = decisionOf(tid);
+    const advCopy = regCopy(Scripts.advance(sg.name));
+    return `<div class="row"${done?' style="opacity:.55"':''}>
+      <div class="flex items-baseline gap-[10px]">
+        <span class="min-w-0">
+          <span class="name" data-act="open-talent" data-tid="${esc(tid)}">${esc(sg.name)}</span>
+          <span class="meta ml-[7px]">${esc(job || '岗位待定')}</span>
+        </span>
+        <span class="ml-auto flex items-center gap-[7px]">
+          ${dec?`<span style="font-size:13px;color:var(--moss)">${dot('var(--moss)')}已定：${esc(dec.decision)}</span>`
+            :`<button class="btn btn-outline btn-sm" data-act="copy" data-id="${copyId}">${ic('copy')}首次话术</button>
+              <button class="btn btn-outline btn-sm" data-act="copy" data-id="${advCopy}">${ic('copy')}推进话术</button>
+              <button class="btn btn-primary btn-sm" data-act="decide" data-tid="${esc(tid)}" data-name="${esc(sg.name)}" data-decision="今天约">${ic('check')}完成</button>`}
+        </span>
+      </div>
+      <div class="ev" style="padding-left:2px;font-size:13.5px;line-height:1.75;color:var(--ink-3)">
+        ${ic('msg')} 「${esc(sg.source||'')}」${esc(String(sg.evidence||'').slice(0,90))}
+      </div>
+    </div>`;
+  };
+  const all = [
+    ...IDX.sigFirst.map(s=>({sg:s,landed:false})),
+    ...IDX.sigLanded.map(s=>({sg:s,landed:true})),
+  ];
+  if (!all.length) return emptyBox('msg','暂无待邀约','群里的新邀约信号经早晨判读后会出现在这里');
+  return all.map(({sg})=>mk(sg)).join('');
+}
+
+// ---- 右辅栏 ----
+function weekStrip(todays, upcoming){
+  const counts = {};
+  (todays||[]).forEach(it => { (counts[dateKey(it.time)] ||= []).push(it); });
+  (upcoming||[]).forEach(it => { (counts[dateKey(it.time)] ||= []).push(it); });
+  let cells = '';
+  const base = new Date();
+  for (let i = 0; i < 7; i++){
+    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+    const dk = `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+    const cnt = (counts[dk] || []).length;
+    cells += `<button class="wcell${WEEK_SEL===dk?' sel':''}" data-act="day" data-date="${dk}">
+      <div class="wd1">${i===0?'今天':WD[d.getDay()].slice(-1)}</div>
+      <div class="wd2">${pad2(d.getDate())}</div>
+      <div class="wd3${cnt?' has':''}">${cnt||'·'}</div>
+    </button>`;
+  }
+  return `<div class="weekmini">${cells}</div>`;
+}
+function showDayDetail(dk){
+  if (!dk || !DATA?.review) return;
+  WEEK_SEL = dk;
+  $$('.wcell').forEach(w => w.classList.toggle('sel', w.dataset.date === dk));
+  const st = DATA.review.structured || {};
+  const all = [...(st.today_interviews||[]), ...(st.upcoming_interviews||[])].filter(it => dateKey(it.time) === dk)
+    .sort((a,b)=>String(a.time).localeCompare(String(b.time)));
+  const box = $('#dayDetail'); if (!box) return;
+  box.innerHTML = all.length ? `<div class="rows">${all.map(it=>{
+    const info = T(it.talent_id);
+    return `<div class="row" style="padding:7px 4px">
+      <span class="time w-10 inline-block">${fmtHM(it.time)}</span>
+      <span class="name text-[13.5px]" data-act="open-talent" data-tid="${esc(it.talent_id)}">${esc(it.name)}</span>
+      <span class="mut ml-1.5">${esc(extractRound(it.round))}·${esc(it.interviewer||'')}</span>
+    </div>`;}).join('')}</div>`
+    : `<div class="mut" style="padding:8px 2px">这天暂无排期——可从今日邀约里挑人往这天约。</div>`;
+}
+function railRisks(rg, foN){
+  // B5 收敛：右栏只做计数+跳转，明细统一住在「候选人页·只看风险」与「保温催收页」
+  const items = [
+    { c:'var(--seal)',  label:'待终止确认',   n:rg.terminate.length, jump:'candidates', risk:'1' },
+    { c:'var(--seal)',  label:'拒绝信号',     n:IDX.rejects.length,  jump:'candidates', risk:'1' },
+    { c:'var(--ochre)', label:'欠面评',       n:foN,                 jump:'nurture' },
+    { c:'var(--ochre)', label:'零记录待核查', n:rg.darkhole.length,  jump:'candidates', risk:'1' },
+    { c:'var(--ochre)', label:'评估挂起',     n:rg.eval.length,      jump:'candidates', risk:'1' },
+  ].filter(x=>x.n>0);
+  if (!items.length) return emptyBox('inbox','没有异常项','管道干净，今天不用救火');
+  return items.map(x=>`
+    <button class="risk-row" data-act="rail" data-jump="${x.jump}" ${x.risk?'data-risk="1"':''}>
+      ${dot(x.c)}<span>${x.label}</span><span class="cnt">${x.n}</span><span class="mut">›</span>
+    </button>`).join('');
+}
+
+// ================================================================
+// 管道页：工作室泳道看板
+// ================================================================
+function renderPipeline(){
+  const el = $('#page-pipeline');
+  if (!DATA?.review){ el.innerHTML = emptyData(); return; }
+  const st = DATA.review.structured || {};
+  const failed = failedList();
+  const total = (st.ats||[]).length - failed.length;
+
+  el.innerHTML = `
+    <div class="phead">
+      <div><h1 class="ptitle">管道</h1>
+        <div class="psub num">在途 ${total} 人 · 另有 ${failed.length} 人不通过待终止 · 数据 ${esc(String(DATA.review.generated_at||'').slice(11,16))}</div></div>
+    </div>
+    <p class="note">口径：行=岗位、列=阶段，格=该岗位的候选人实际已到达的最后一轮（✅已通过，或⏳已面完待面评）——不按「下一目标轮次」预置：已过初试等复试的人仍在初试列，不会看起来像已进复试。Offer／待入职按 ATS 状态。未进面试流程（待排初试）者不入列，在泳道下方标注；不通过待终止者见页底折叠区。</p>
+    ${IDX.depts.map(lane).join('')}
+    ${failedStrip(failed)}`;
+}
+// 实际到达阶段：从 rounds_display 推最后一轮（✅=已通过、⏳=已面待结论）；
+// stage_bucket 是「下一目标轮次」语义，直接当位置用会虚置一格（08-27 用户指正，21/33 错位）
+function reachedStage(c){
+  let furthest = null;
+  String(c.rounds_display || '').split(/\s+/).filter(Boolean).forEach(t => {
+    if (!t.endsWith('✅') && !t.includes('⏳')) return;
+    const s = t.replace(/[✅⏳]/g, '').replace(/欠\d+天?/g, '').replace(/（[^）]*）/g, '').replace(/\([^)]*\)/g, '').trim();
+    let st = null;
+    if (s.includes('HR')) st = 'HR面';
+    else if (s.includes('终试')) st = '终试';
+    else if (s.includes('复试')) st = '复试';
+    else if (s.includes('初试')) st = '初试';
+    if (st) furthest = st;
+  });
+  return furthest;
+}
+function actualStage(c){
+  if (c.stage_bucket === 'Offer' || c.stage_bucket === '待入职') return c.stage_bucket;
+  const r = reachedStage(c);
+  if (r) return r;
+  // 无面试记录：ATS 仍标面试阶段则保守保留（防数据滞后误降级），否则归待排初试
+  return ['初试','复试','终试','HR面'].includes(c.stage_bucket) ? c.stage_bucket : null;
+}
+// v4.2 矩阵泳道：工作室=泳道，岗位=行，六阶段=列（位置=实际到达阶段）
+function lane(dep){
+  const all = dep.jobs.flatMap(j=>j.candidates);
+  const active = all.filter(c=>!c.failed);
+  const posOf = (c) => actualStage(c);
+  const prescr = active.filter(c => !posOf(c)); // 未进面试流程（无已到达轮次）
+  const heads = `<div class="colh colh-corner"></div>` +
+    STAGES.map((sn,i)=>`<div class="colh"><div class="cl">${sn}</div><div class="band" style="background:${BANDS[i]}"></div></div>`).join('');
+  const rows = dep.jobs.map(j => {
+    const cs = (j.candidates||[]).filter(c => !c.failed && posOf(c));
+    return `<div class="jrow-h"><div class="jn">${esc(j.job)}</div><div class="jc">${cs.length} 人</div></div>` +
+      STAGES.map(sn => `<div class="cell">${cs.filter(c => posOf(c) === sn).map(kcard).join('')}</div>`).join('');
+  }).join('');
+  return `<div class="lane" style="--st-hue:${studioHue(dep.dept)}">
+    <div class="lane-h"><i class="dot" style="background:${studioHue(dep.dept)};width:9px;height:9px"></i><h3>${esc(dep.dept)}</h3><span class="mut num">在途 ${active.length} 人 · ${dep.jobs.length} 岗</span></div>
+    <div class="board">${heads}${rows}</div>
+    ${prescr.length ? `<div class="prescr">${ic('clock')}<span><b style="font-weight:650">另 ${prescr.length} 人待排初试</b>（未进面试流程，不入列）：</span><span class="mut">${prescr.map(c=>esc(c.name)).join('、')}</span></div>` : ''}
+  </div>`;
+}
+function kcard(c){
+  const info = T(c.talent_id);
+  const dcol = c.dwell_flag==='🔴'?'var(--seal)':c.dwell_flag==='🟠'?'var(--ochre)':null;
+  return `<button class="kcard" data-act="open-talent" data-tid="${esc(c.talent_id)}"
+    title="${esc(info?info.c.rounds_display+' · 停'+c.dwell_days+'天':c.stage)}">
+    <span class="kn">${dcol?dot(dcol):''}${esc(c.name)}</span>
+  </button>`;
+}
+function failedStrip(failed){
+  if (!failed.length) return '';
+  const open = OPEN.has('failed');
+  return `
+    <div class="sechead"><button class="btn btn-ghost btn-sm w-full justify-start" data-act="fold" data-key="failed">
+      ${ic('alert')}<span class="mlabel" style="color:var(--seal)">不通过待终止 · ${failed.length} 人</span>
+      <span class="rule"></span>${ic('chev')}</button></div>
+    <div class="fold-b ${open?'open':''}" id="fold-failed">
+      <table class="tt"><tbody>${failed.map(({c,job,dept})=>`
+        <tr class="acc-seal"><td><span class="name" data-act="open-talent" data-tid="${esc(c.talent_id)}">${esc(c.name)}</span></td>
+        <td class="meta">${esc(dept)}·${esc(job)}</td><td class="num mut">停 ${c.dwell_days} 天</td>
+        <td style="text-align:right"><button class="btn btn-outline btn-sm" data-act="decide" data-confirm="1" data-tid="${esc(c.talent_id)}" data-name="${esc(c.name)}" data-decision="终止">确认终止</button></td></tr>`).join('')}
+      </tbody></table>
+    </div>`;
+}
+// ================================================================
+// 候选人页：工作室 → 岗位 两级分组密度表
+// ================================================================
+let candCache = [];
+function renderCandidates(){
+  const el = $('#page-candidates');
+  if (!DATA?.review){ el.innerHTML = emptyData(); return; }
+  candCache = flatCandidates();
+  const depts = IDX.depts.map(d=>d.dept);
+  const tabs = ['全部',...depts];
+  el.innerHTML = `
+    <div class="phead">
+      <div><h1 class="ptitle">候选人</h1><div class="psub num" id="candCount">在途 ${candCache.length} 人 · 组内按接近成交程度排序</div></div>
+      <div class="pright">
+        <label class="mut flex gap-1.5 items-center cursor-pointer">
+          <input type="checkbox" class="checkbox checkbox-xs checkbox-primary" id="cfRisk" ${CF.risk?'checked':''}>只看有风险</label>
+        <input type="search" class="input input-bordered input-sm w-52" id="cfQ" placeholder="搜姓名 / 岗位…" value="${esc(CF.q)}">
+      </div>
+    </div>
+    <div class="filterbar tabs tabs-bordered">${tabs.map(t=>`<button class="tab text-[14px] ${(CF.dept||'全部')===t?'tab-active':''}" data-act="dept-tab" data-v="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+    <div id="cbody">${candFilteredHtml()}</div>`;
+  $('#cfRisk').onchange = e => { CF.risk = e.target.checked; refreshC(); };
+  const q = $('#cfQ');
+  q.oninput = () => { CF.q = q.value; refreshC(); };
+}
+function flatCandidates(){
+  const out = [];
+  IDX.depts.forEach(d => d.jobs.forEach(j => j.candidates.forEach(c =>
+    out.push({ c, job:j.job, dept:d.dept }))));
+  return out;
+}
+function candFiltered(){
+  let list = candCache;
+  if (CF.dept && CF.dept !== '全部') list = list.filter(x => x.dept === CF.dept);
+  if (CF.risk) list = list.filter(x => x.c.failed || x.c.dwell_flag === '🔴' || x.c.feedback
+    || String(x.c.stuck_reason||'').includes('零记录')
+    || IDX.rejTids.has(String(x.c.talent_id)) || IDX.evalTids.has(String(x.c.talent_id)));
+  if (CF.q) { const qq = CF.q.trim(); list = list.filter(x => String(x.c.name||'').includes(qq) || x.job.includes(qq)); }
+  return list;
+}
+function candFilteredHtml(){
+  const list = candFiltered();
+  if (!list.length) return emptyBox('user','没有匹配的候选人','试试放宽筛选或清空搜索');
+  let html = `<table class="tt"><colgroup>
+      <col style="width:130px"><col style="width:230px"><col style="width:76px">
+      <col style="width:130px"><col><col style="width:104px"></colgroup>
+    <thead><tr><th>候选人</th><th>轮次进度</th><th class="text-right">停留</th><th>结论</th><th>卡点 / 下一步</th><th>最近触达</th></tr></thead><tbody>`;
+  let lastDept = null, lastJob = null;
+  list.forEach(({c, job, dept}) => {
+    if (dept !== lastDept){ html += `<tr class="grp" style="--st-hue:${studioHue(dept)}"><td colspan="6">${esc(dept)}</td></tr>`; lastDept = dept; lastJob = null; }
+    if (job !== lastJob){ html += `<tr class="subh"><td colspan="6">${esc(job)} · ${
+      list.filter(x=>x.dept===dept&&x.job===job).length} 人</td></tr>`; lastJob = job; }
+    const nur = nurtureOf(c.talent_id);
+    const blocker = c.stuck_reason || c.offer_status_display || (c.to_advance ? '面评通过待推进' : '—');
+    html += `<tr data-act="open-talent" data-tid="${esc(c.talent_id)}" tabindex="0" style="cursor:pointer">
+      <td><span class="name" style="font-size:13px">${esc(c.name)}</span></td>
+      <td><span class="chain">${chainText(c.rounds_display)}</span></td>
+      <td style="text-align:right">${dwellTxt(c.dwell_days, c.dwell_flag)}</td>
+      <td>${conclCell(c)}</td>
+      <td class="meta" style="max-width:260px">${esc(blocker)}</td>
+      <td class="num mut">${nur?.last_touch_date ? esc(nur.last_touch_date.slice(5)) : '—'}</td>
+    </tr>`;
+  });
+  return html + '</tbody></table>';
+}
+function refreshC(){
+  const box = $('#cbody'); if (box) box.innerHTML = candFilteredHtml();
+  const cnt = $('#candCount'); if (cnt) cnt.textContent = `在途 ${candFiltered().length} 人 · 组内按接近成交程度排序`;
+}
+
+// ================================================================
+// 保温催收页：欠账聚合表 + 单表队列
+// ================================================================
+function renderNurture(){
+  const el = $('#page-nurture');
+  if (!DATA?.review){ el.innerHTML = emptyData(); return; }
+  const st = DATA.review.structured || {};
+  const debts = (st.interviewer_feedback_debt || []).slice()
+    .sort((a,b)=>(b.in_scope_count-a.in_scope_count)||(b.oldest_overdue_days-a.oldest_overdue_days));
+  const debtTotal = debts.reduce((s,d)=>s+(d.in_scope_count||0),0);
+
+  // 队列单表：欠面评 + 待推进积压 合并，按天数降序
+  const fo = (st.feedback_overdue||[]).map(f=>({
+    tid:String(f.talent_id), name:f.name, days:f.overdue_days,
+    ivs:(f.interviewers||[]).join('、'), urge:true }));
+  const adv = advBacklog().map(a=>({
+    tid:a.tid, name:a.name, days:a.dwell_days??0, ivs:'', urge:false }));
+  const queue = [...fo, ...adv].sort((a,b)=>b.days-a.days);
+
+  el.innerHTML = `
+    <div class="phead">
+      <div><h1 class="ptitle">保温催收</h1>
+        <div class="psub num">面试官欠账 ${debts.length} 位 · 阻塞 ${debtTotal} 条 · 队列 ${queue.length} 人</div></div>
+    </div>
+
+    <div class="sechead"><span class="mlabel">面试官欠账</span><span class="rule"></span>
+      <span class="right mut">左条=建议上群推（重欠或阻塞≥2）</span></div>
+    ${debtTable(debts)}
+
+    <div class="sechead"><span class="mlabel">保温队列</span><span class="rule"></span>
+      <span class="right mut">左条：红=欠≥14天 · 赭=4–13天 · 勾选写进保温状态文件跨天累积</span></div>
+    ${queueTable(queue)}`;
+}
+function debtTable(debts){
+  if (!debts.length) return '<p class="sum">没有面评欠账——所有面试官都很及时，难得。</p>';
+  return `<table class="tt">
+    <thead><tr><th class="w-[110px]">面试官</th><th class="w-[150px]">阻塞 / 最久</th><th>阻塞候选人（岗位 · 轮次 · 欠几天）</th><th class="w-[90px] text-right">催办</th></tr></thead>
+    <tbody>${debts.map(d=>{
+      const sev = ((d.pending_count||0)-(d.ancient_count||0))>=10 || (d.in_scope_count||0)>=2;
+      const names=(d.in_scope||[]).map(x=>x.name);
+      const days=Math.max(d.oldest_overdue_days||0,...(d.in_scope||[]).map(x=>x.overdue_days||0));
+      const cid=regCopy(Scripts.urgeInterviewer(d.interviewer,names.length?names:['候选人'],days));
+      return `<tr class="${sev?'acc-seal':''}">
+        <td><span class="name" style="cursor:default">${esc(d.interviewer)}</span>${sev?`<div class="mut" style="color:var(--seal)">建议上群推</div>`:''}</td>
+        <td class="num">${d.in_scope_count||0} 人 · 拖${d.oldest_overdue_days||0}天</td>
+        <td>${(d.in_scope||[]).map(x=>{
+          const j = IDX.nameJob.get(x.name);
+          return `<div style="padding:1px 0"><span class="name" data-act="open-talent" style="font-size:13.5px">${esc(x.name)}</span>
+            <span class="mut">${j?esc(j.job)+' · ':''}欠 ${x.overdue_days} 天</span></div>`;}).join('')
+          || '<span class="mut">无阻塞明细（均为池外任务）</span>'}</td>
+        <td style="text-align:right"><button class="btn btn-outline btn-sm" data-act="copy" data-id="${cid}">${ic('copy')}催办</button></td>
+      </tr>`;}).join('')}</tbody></table>`;
+}
+function advBacklog(){
+  const st = DATA?.review?.structured || {};
+  const list = [];
+  (st.to_advance || []).forEach(e => {
+    const info = T(e.talent_id);
+    list.push({ tid:String(e.talent_id), name:e.name,
+      job: info?.job || '', dept: info?.dept || '',
+      dwell_days:e.dwell_days, rounds:info?.c.rounds_display||'' });
+  });
+  return list;
+}
+function queueTable(queue){
+  if (!queue.length) return '<p class="sum">没有人需要保温或催收，管道节奏很健康。</p>';
+  return `<table class="tt"><colgroup>
+      <col style="width:118px"><col><col style="width:250px"><col style="width:64px">
+      <col style="width:100px"><col style="width:88px"><col style="width:216px"></colgroup>
+    <thead><tr><th>候选人</th><th>岗位 · 团队</th><th>轮次</th><th class="text-right">天数</th><th>面试官</th><th>上次触达</th><th class="text-right">动作</th></tr></thead>
+    <tbody>${queue.map(x=>{
+      const tid=String(x.tid); const info=T(tid); const nur=nurtureOf(tid);
+      const sevCls = x.days>=14?'acc-seal':x.days>=4?'acc-ochre':'';
+      const touched=touchedToday(tid);
+      const days=x.days;
+      const syncId=regCopy(x.urge?Scripts.syncCandidate(x.name,days):Scripts.advance(x.name));
+      const urgeId=x.ivs?regCopy(Scripts.urgeInterviewer(x.ivs.split('、')[0],[x.name],days)):null;
+      return `<tr class="${sevCls}">
+        <td class="whitespace-nowrap"><span class="name" data-act="open-talent" data-tid="${esc(tid)}">${esc(x.name)}</span></td>
+        <td class="meta">${esc(info?info.dept+'·'+info.job:'')}</td>
+        <td><span class="chain">${info?chainText(info.c.rounds_display):'<span class="mut">—</span>'}</span></td>
+        <td style="text-align:right">${dwellTxt(days, days>=14?'🔴':days>=4?'🟠':'')}</td>
+        <td class="meta">${esc(x.ivs||'—')}</td>
+        <td class="num mut">${nur?.last_touch_date?esc(nur.last_touch_date.slice(5)):'—'}</td>
+        <td class="text-right whitespace-nowrap">
+          ${nur?.status==='escalated'?'<span class="mut" style="color:var(--seal)">建议终止</span>':''}
+          ${nur&&nur.escalation_level>1?`<span class="badge badge-warning badge-sm">L${nur.escalation_level}</span>`:''}
+          ${touched?`<span style="font-size:13px;color:var(--moss)">${dot('var(--moss)')}已触达</span>`
+            :`<button class="btn btn-primary btn-sm" data-act="touch" data-tid="${esc(tid)}" data-name="${esc(x.name)}" data-label="${x.urge?'催面评':'保温-正常'}">${x.urge?'已催':'已同步'}</button>`}
+          <button class="btn btn-outline btn-sm" data-act="resp" data-tid="${esc(tid)}" data-name="${esc(x.name)}" data-status="replied">回复了</button>
+          <button class="btn btn-outline btn-sm btn-square" data-act="copy" data-id="${syncId}">${ic('copy')}</button>
+          ${urgeId?`<button class="btn btn-outline btn-sm btn-square" data-act="copy" data-id="${urgeId}" title="催面试官话术">${ic('user')}</button>`:''}
+        </td></tr>`;}).join('')}</tbody></table>`;
+}
+
+// ================================================================
+// 抽屉
+// ================================================================
+function openDrawer(tid){
+  const info = T(tid);
+  if (!info){ toast('找不到该候选人档案', 'err'); return; }
+  DW_TID = String(tid);
+  const { c, job, dept } = info;
+  const st = DATA.review.structured || {};
+  const fo = (st.feedback_overdue||[]).find(f => String(f.talent_id)===String(tid));
+  const nur = nurtureOf(tid);
+  const dec = decisionOf(tid);
+  const dw = $('#drawer');
+  dw.innerHTML = `
+    <button class="btn btn-ghost btn-xs btn-circle absolute top-3.5 right-3.5" data-act="drawer-close">${ic('x')}</button>
+    <div class="px-6 pt-6 pb-3.5 border-b border-[var(--line)]">
+      <div style="font-family:var(--f-display);font-size:23px;font-weight:600;letter-spacing:.03em">${esc(c.name)}</div>
+      <div class="meta mt-1.5">${esc(dept)} · ${esc(job)} · ${dwellTxt(c.dwell_days,c.dwell_flag)}</div>
+    </div>
+    <div class="flex-1 overflow-y-auto px-6 py-3.5">
+      <div class="mlabel">进度</div>
+      <div class="chain text-[13.5px] mt-1.5 mb-0.5">${chainChipsFull(c)}</div>
+      <div class="mlabel mt-[18px]">状态</div>
+      <div class="dw-row"><span class="k">当前阶段</span><span class="v">${esc(c.stage)}${c.stage_bucket?' · '+esc(c.stage_bucket):''}</span></div>
+      <div class="dw-row"><span class="k">最新面评</span><span class="v">${
+        c.latest_conclusion===1?'通过':c.failed?'不通过':'未出'}</span></div>
+      ${c.evaluation_conclusion_display?`<div class="dw-row"><span class="k">业务评估</span><span class="v">${esc(c.evaluation_conclusion_display)}</span></div>`:''}
+      ${c.offer_status_display?`<div class="dw-row"><span class="k">Offer</span><span class="v">${esc(c.offer_status_display)}</span></div>`:''}
+      ${c.stuck_reason?`<div class="dw-row"><span class="k">卡点</span><span class="v">${esc(c.stuck_reason)}</span></div>`:''}
+      ${fo?`<div class="dw-row"><span class="k">面评催收</span><span class="v">${esc((fo.interviewers||[]).join('、'))} 欠 ${fo.overdue_days} 天（${esc(fo.round||'')}）</span></div>`:''}
+      <div class="mlabel mt-[18px]">保温状态</div>
+      ${nur?`<div class="dw-row"><span class="k">历史</span><span class="v num">碰过 ${nur.touch_count} 次 · 上次 ${esc(nur.last_touch_date||'—')}（${esc(nur.last_touch_action||'')}）</span></div>
+      <div class="dw-row"><span class="k">等级</span><span class="v">L${nur.escalation_level} · 回复：${nur.last_response==='replied'?'回复过':nur.last_response==='no_reply'?'没回':'未记录'}</span></div>`
+      :'<p class="note">还没有触达记录，第一次触达后自动建档。</p>'}
+    </div>
+    <div class="border-t border-[var(--line)] px-6 py-3 flex flex-wrap gap-2 bg-[var(--paper)]">
+      ${['今天约','催面评','再等等','终止'].map(d =>
+        `<button class="${dec?.decision===d?'btn btn-primary':'btn btn-outline'} btn-sm" data-act="decide" ${d==='终止'?'data-confirm="1"':''} data-tid="${esc(tid)}" data-name="${esc(c.name)}" data-decision="${d}">${d}</button>`).join('')}
+      <span class="flex-1"></span>
+      <button class="btn btn-outline btn-sm" data-act="touch" data-tid="${esc(tid)}" data-name="${esc(c.name)}" data-label="保温-正常">记录触达</button>
+      <button class="btn btn-outline btn-sm" data-act="touch" data-tid="${esc(tid)}" data-name="${esc(c.name)}" data-label="催面评">催面评已发</button>
+      <button class="btn btn-outline btn-sm" data-act="resp" data-tid="${esc(tid)}" data-name="${esc(c.name)}" data-status="replied">回复了</button>
+      <button class="btn btn-outline btn-sm" data-act="resp" data-tid="${esc(tid)}" data-name="${esc(c.name)}" data-status="no_reply">没回</button>
+    </div>`;
+  dw.classList.add('on'); $('#drawerMask').classList.add('on');
+  DW_BACK = document.activeElement;
+  const fs = drawerFocusables(); if (fs.length) fs[0].focus();
+}
+// 抽屉里的链（含徽标语义，文字版即可）
+function chainChipsFull(c){ return chainText(c.rounds_display); }
+function drawerFocusables(){
+  return $$('#drawer button, #drawer [href], #drawer input, #drawer select, #drawer [tabindex]:not([tabindex="-1"])')
+    .filter(el => !el.disabled && el.offsetParent !== null);
+}
+let DW_BACK = null;
+function closeDrawer(){
+  DW_TID = null; $('#drawer').classList.remove('on'); $('#drawerMask').classList.remove('on');
+  if (DW_BACK && DW_BACK.isConnected && typeof DW_BACK.focus === 'function') DW_BACK.focus();
+  DW_BACK = null;
+}
+
+// ================================================================
+// 写回：乐观更新本地缓存 + 保滚动重绘（禁全页重建收体验税）
+// 本地缓存变更逻辑与 server 端同语义；下一次手动对账/导航自然对齐文件真相
+// ================================================================
+function localDecide(tid, name, decision){
+  IDX.decisions.set(String(tid), { talent_id:String(tid), name, decision, decided_at:'', notes:'' });
+}
+function localTouch(tid, name, label){
+  let c = IDX.nurture.get(String(tid));
+  if (!c){
+    c = { name, last_touch_date:null, last_touch_action:null,last_touch_channel:null,
+          touch_count:0, escalation_level:1, last_response:null, status:'active' };
+    IDX.nurture.set(String(tid), c);
+  } else if (name && c.name !== name) c.name = name;
+  const today = localToday(), prev = c.touch_count || 0;
+  // 升降级与 server 端同语义：no_reply 且第2次触达→+1封顶L3；L3仍no_reply→escalated；再碰→降回L2
+  if (c.last_response === 'no_reply' && prev >= 1 && today !== c.last_touch_date){
+    const nl = Math.min((c.escalation_level||1)+1, 3);
+    if (nl > (c.escalation_level||1)) c.escalation_level = nl;
+    if (nl >= 3 && c.last_response === 'no_reply') c.status = 'escalated';
+  }
+  c.last_touch_date = today; c.last_touch_action = label; c.last_touch_channel = '飞书IM';
+  c.touch_count = prev + 1; c.last_response = null;
+  if (c.status === 'escalated'){ c.status = 'active'; c.escalation_level = Math.min(c.escalation_level||1, 2); }
+}
+function localResp(tid, status, name){
+  let c = IDX.nurture.get(String(tid));
+  if (!c){
+    c = { name: name || String(tid), last_touch_date:null,last_touch_action:null,last_touch_channel:null,
+          touch_count:0, escalation_level:1, last_response:null, status:'active' };
+    IDX.nurture.set(String(tid), c);
+  }
+  c.last_response = status;
+  if (status === 'replied'){ c.escalation_level = 1; if (c.status==='escalated') c.status='active'; }
+}
+/** 局部重绘当前路由：保留滚动位置与展开态，抽屉开着则同步其内容 */
+function rerenderKeepScroll(){
+  const y = window.scrollY;
+  renderNav(); renderSbStatus(null);
+  ({ battle:renderBattle, pipeline:renderPipeline, candidates:renderCandidates, nurture:renderNurture })[ROUTE]();
+  window.scrollTo(0, y);
+  if (DW_TID && T(DW_TID)) openDrawer(DW_TID);
+}
+async function doDecide(tid, name, decision, confirmFlag){
+  if (confirmFlag && !window.confirm(`确认将【${name}】标记为「${decision}」？终止操作建议先在 ATS 里执行。`)) return;
+  const r = await post('/api/decide', { items:[{ talent_id: tid, name, decision }] });
+  if (r.code === 200){ localDecide(tid, name, decision); toast(`${name} → ${decision} 已落盘`, 'ok'); rerenderKeepScroll(); }
+  else toast('写回失败：' + String(r.msg||'').slice(-160), 'err');
+}
+async function doTouch(tid, name, label){
+  const r = await post('/api/touch', { talent_id: tid, name, action: label || '保温-正常', channel: '飞书IM' });
+  if (r.code === 200){ localTouch(tid, name, label || '保温-正常'); toast(`${name} 触达已记录`, 'ok'); rerenderKeepScroll(); }
+  else toast('记录失败：' + String(r.msg||'').slice(-160), 'err');
+}
+async function doResp(tid, status, name){
+  const r = await post('/api/response', { talent_id: tid, status, name });
+  if (r.code === 200){ localResp(tid, status, name); toast(status==='replied'?'已记录：候选人回复了':'已记录：未回复（将自动升级话术）', 'ok'); rerenderKeepScroll(); }
+  else toast('记录失败：' + String(r.msg||'').slice(-160), 'err');
+}
+
+// ================================================================
+// 导航 / 数据 / 新鲜度
+// ================================================================
+const NAVS = [
+  { id:'battle', label:'作战', icon:'bolt' },
+  { id:'pipeline', label:'管道', icon:'lane' },
+  { id:'candidates', label:'候选人', icon:'user' },
+  { id:'nurture', label:'保温催收', icon:'clock' },
+];
+function renderNav(){
+  const riskN = DATA?.review ? (()=>{ const g=riskGroups(); return g.terminate.length+g.darkhole.length+g.eval.length+IDX.rejects.length; })() : 0;
+  const debtN = (DATA?.review?.structured?.interviewer_feedback_debt || []).reduce((s,d)=>s+(d.in_scope_count||0),0);
+  $('#nav').innerHTML = NAVS.map(n => `
+    <button class="btn btn-ghost btn-sm w-full ${ROUTE===n.id?'on':''}" data-act="nav" data-page="${n.id}">
+      ${ic(n.icon)}<span>${n.label}</span>${
+        n.id==='battle'&&riskN?`<span class="nbadge">${riskN}</span>`:
+        n.id==='nurture'&&debtN?`<span class="nbadge">${debtN}</span>`:''}
+    </button>`).join('');
+}
+function renderSbStatus(status){
+  const box = $('#sbStatus'); if (!box) return;
+  const today = localToday();
+  const rd = DATA?.review?.date, rg = String(DATA?.review?.generated_at||'').slice(11,16);
+  const sd = DATA?.signals?.date;
+  box.innerHTML = `
+    <div class="sbf-row"><span class="dot" style="background:${rd===today?'var(--moss)':rd?'var(--seal)':'var(--ochre)'}"></span><span class="num">对账 ${esc(rd||'无')} ${rg||''}</span></div>
+    <div class="sbf-row"><span class="dot" style="background:${sd===today?'var(--moss)':sd?'var(--ochre)':'var(--seal)'}"></span><span class="num">信号 ${esc(sd||'未判读')}</span></div>`;
+  const b = $('#banner');
+  const running = status && status.refresh && status.refresh.running;
+  // 数据年龄：generated_at 形如 "YYYY-MM-DD HH:MM"
+  let ageH = null;
+  if (rd && rg){
+    const t = new Date(`${rd}T${rg}:00`);
+    if (!isNaN(t)) ageH = (Date.now() - t.getTime()) / 3600000;
+  }
+  if (!running && rd && rd !== today){
+    b.style.display = '';
+    b.innerHTML = `<div class="alert alert-warning py-2.5 px-4">
+      ${ic('alert')}<span class="font-semibold">对账数据是 ${esc(rd)} 的，不是今天的。</span>
+      <button class="btn btn-sm" data-act="refresh">立即对账</button></div>`;
+  } else if (!running && ageH !== null && ageH >= 6){
+    // 跨天红条之外的第二档：当天但已过 6 小时，提醒下午看盘的自己
+    b.style.display = '';
+    b.innerHTML = `<div class="alert alert-warning py-2.5 px-4">
+      ${ic('clock')}<span class="font-semibold">对账数据已是 ${Math.floor(ageH)} 小时前（${esc(rg)}）的——下午推进建议先刷新一次。</span>
+      <button class="btn btn-outline btn-sm" data-act="refresh">立即对账</button></div>`;
+  } else if (!running){ b.style.display = 'none'; }
+}
+function switchRoute(page){
+  ROUTE = page;
+  $$('.page').forEach(p => p.classList.remove('on'));
+  $('#page-' + page).classList.add('on');
+  renderNav();
+  try { history.replaceState(null, '', '#/' + page); } catch {}
+  ({ battle:renderBattle, pipeline:renderPipeline, candidates:renderCandidates, nurture:renderNurture })[page]();
+  window.scrollTo(0, 0);
+}
+async function loadData(){
+  DATA = await fetch('/api/data').then(r => r.json());
+  buildIdx();
+}
+async function reloadData(){ await loadData(); renderNav(); renderSbStatus(null); switchRoute(ROUTE); }
+async function pollRefresh(){
+  const s = await fetch('/api/status').then(r => r.json());
+  if (s.refresh && s.refresh.running){
+    refreshing = true;
+    $('#btnRefresh').classList.add('spin');
+    $('#banner').style.display = '';
+    $('#banner').innerHTML = `<div class="alert alert-neutral py-2.5 px-4">
+      ${ic('refresh')}<span class="font-semibold">对账进行中（拉取 ATS / 日程 / 消息），完成后自动刷新…</span></div>`;
+    setTimeout(pollRefresh, 3000);
+  } else {
+    refreshing = false;
+    $('#btnRefresh').classList.remove('spin');
+    if (s.refresh && s.refresh.finished_at && s.refresh.ok === false) toast('对账脚本报错了，详情看 notes/_wb_refresh.log', 'err');
+    await loadData();
+    renderNav(); renderSbStatus(s); switchRoute(ROUTE);
+    if (s.refresh && s.refresh.finished_at && s.refresh.ok) toast('对账完成，数据已是最新', 'ok');
+  }
+}
+async function triggerRefresh(){
+  if (refreshing){ toast('已经在跑了'); return; }
+  await post('/api/refresh');
+  pollRefresh();
+}
+
+// ---------- 事件委托 ----------
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest('[data-act]');
+  if (!t) return;
+  const act = t.dataset.act;
+  if (act === 'nav'){ switchRoute(t.dataset.page); }
+  else if (act === 'open-talent'){ e.stopPropagation(); openDrawer(t.dataset.tid); }
+  else if (act === 'drawer-close'){ closeDrawer(); }
+  else if (act === 'copy'){ await copyById(t.dataset.id); }
+  else if (act === 'day'){ showDayDetail(t.dataset.date); }
+  else if (act === 'rail'){
+    if (t.dataset.jump){
+      // 跳明细家：风险族预置「只看有风险」筛选，落点即清单
+      if (t.dataset.risk){ CF.risk = true; CF.dept = ''; }
+      switchRoute(t.dataset.jump); return;
+    }
+    const k = t.dataset.key;
+    OPEN.has(k) ? OPEN.delete(k) : OPEN.add(k);
+    const box = $('#fold-'+k); if (box) box.classList.toggle('open');
+  }
+  else if (act === 'fold'){
+    const k = t.dataset.key;
+    OPEN.has(k) ? OPEN.delete(k) : OPEN.add(k);
+    const box = $('#fold-'+k); if (box) box.classList.toggle('open');
+  }
+  else if (act === 'dept-tab'){ CF.dept = t.dataset.v; renderCandidates(); }
+  else if (act === 'cfrisk'){ CF.risk = !CF.risk; renderCandidates(); }
+  else if (act === 'refresh'){ triggerRefresh(); }
+  else if (act === 'link'){ window.open(t.dataset.url, '_blank'); }
+  else if (act === 'decide'){ await doDecide(t.dataset.tid, t.dataset.name, t.dataset.decision, t.dataset.confirm); }
+  else if (act === 'touch'){ await doTouch(t.dataset.tid, t.dataset.name, t.dataset.label); }
+  else if (act === 'resp'){ await doResp(t.dataset.tid, t.dataset.status, t.dataset.name); }
+});
+$('#drawerMask').addEventListener('click', closeDrawer);
+$('#btnRefresh').addEventListener('click', triggerRefresh);
+window.addEventListener('hashchange', () => location.reload());
+// 键盘可达性：Escape 关抽屉；Tab 在抽屉内循环（焦点陷阱）；Enter/空格 打开键盘聚焦到的候选人行
+document.addEventListener('keydown', (e) => {
+  const drawerOn = $('#drawer').classList.contains('on');
+  if (e.key === 'Escape' && drawerOn){ closeDrawer(); return; }
+  if (drawerOn && e.key === 'Tab'){
+    const f = drawerFocusables(); if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+    return;
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target instanceof HTMLElement
+      && e.target.matches('tr[data-act="open-talent"]')){
+    e.preventDefault(); openDrawer(e.target.dataset.tid);
+  }
+});
+// 数据年龄轮询：每 10 分钟刷新侧栏状态灯与页顶横幅（B4）
+setInterval(() => { fetch('/api/status').then(r=>r.json()).then(s=>renderSbStatus(s)).catch(()=>{}); }, 600000);
+
+// ---------- 启动 ----------
+window.addEventListener('error', (e) => {
+  const box = $('#errBox');
+  if (box){ box.textContent = '页面脚本异常：' + e.message; box.style.display = ''; }
+});
+(async function init(){
+  try {
+    const [status] = await Promise.all([ fetch('/api/status').then(r=>r.json()), loadData() ]);
+    const hash = (location.hash || '').replace('#/', '');
+    ROUTE = NAVS.some(n => n.id === hash) ? hash : 'battle';
+    renderNav(); renderSbStatus(status); switchRoute(ROUTE);
+    if (status.refresh && status.refresh.running) pollRefresh();
+  } catch (e){
+    $('main').innerHTML = `<div class="phead"><div><h1 class="ptitle">加载失败</h1></div></div>
+      <p class="sum">${esc(e && e.message || e)}<br>若提示 Failed to fetch：请先用 node workbench/server.mjs 启动本地服务。</p>`;
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>

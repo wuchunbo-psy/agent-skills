@@ -64,3 +64,4 @@ MCP 也失败 → 切 CDP Proxy（localhost:3456，仅 Claude Code 环境有 web
 - 网易超大附件链接可能被 HTML 实体编码（`&amp;`）——脚本已统一 decode，手提链接时注意
 - 大文件（>150MB）下载后 `ls -lh` 确认大小合理，不要只看文件是否存在
 - 全量模式（不传 `--records`）会把**所有** verified 历史链接串行拖出来下（可能几 GB）——当天收简历务必用 `--records` 或直接跑 `collect.mjs`（默认只下今天的）
+- **163 `large-attachment-download` 页面两轮 headless+headed 失败 ≠ 链接失效**（2026-08-31 实测：页面无需登录、文件在、有"普通下载"按钮，但 Playwright 点击后下载事件被宿主环境取消无法落盘）。别再用浏览器自动化重试此类型——直接列给用户手动下载，例外是 ZCode 内嵌浏览器（IAB）也不允许下载落盘，同样别试

@@ -1,0 +1,18 @@
+[
+ {"id": "iv1", "application_id": "ap1", "round": 1, "begin_time": 1786086000000, "end_time": 1786088700000, "status": null,
+  "interview_record_list": [{"interviewer": {"id": "ou_Z", "name": "钟某"}, "conclusion": 1}]},
+ {"id": "iv2", "application_id": "ap2", "round": 1, "begin_time": 1786172400000, "end_time": 1786175100000, "status": null,
+  "interview_record_list": [{"interviewer": {"id": "ou_Z", "name": "钟某"}, "conclusion": 2}]},
+ {"id": "iv3", "application_id": "ap3", "round": 1, "begin_time": 1786258800000, "end_time": 1786261500000, "status": null,
+  "interview_record_list": [{"interviewer": {"id": "ou_H", "name": "金某"}, "conclusion": null}]},
+ {"id": "iv4", "application_id": "ap4", "round": 2, "begin_time": 1786345200000, "end_time": 1786347900000, "status": null,
+  "interview_record_list": [{"interviewer": {"id": "ou_Z", "name": "钟某"}, "conclusion": 2}]},
+ {"id": "iv5", "application_id": "ap5", "round": 1, "begin_time": 1786431600000, "end_time": 1786434300000, "status": null,
+  "interview_record_list": []},
+ {"id": "iv6", "application_id": "ap6", "round": 3, "begin_time": 1786518000000, "end_time": 1786520700000, "status": null,
+  "interview_record_list": [{"interviewer": {"id": "ou_X", "name": "夏某"}, "conclusion": 1}]},
+ {"id": "iv7", "application_id": "ap7", "round": 1, "begin_time": 1786604400000, "end_time": 1786607100000, "status": null,
+  "interview_record_list": [{"interviewer": {"id": "ou_Z", "name": "钟某"}, "conclusion": 1}]},
+ {"id": "iv8", "application_id": "ap8", "round": 2, "begin_time": 1786690800000, "end_time": 1786693500000, "status": null,
+  "interview_record_list": [{"interviewer": {"id": "ou_H", "name": "金某"}, "conclusion": null}]}
+]

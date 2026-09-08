@@ -18,6 +18,8 @@
 | [**candidate-nurture**](skills/candidate-nurture) | 候选人保温+面评催收：读对账预警+信号判读+保温状态→产出"今天该碰谁+话术+升级标注"行动清单，触达状态跨天延续（话术自动升级/去重/终止提示） | Python 脚本（`nurture_state.py`），依赖 `_daily_review.json` + `_signals.json` |
 | [**talent-profile**](skills/talent-profile) | 候选人匹配覆盖图：JD要求×候选人矩阵，✅/⚠️/❌覆盖度（不打分），横向对比谁缺哪块 | Python，输出 HTML |
 | [**pipeline-dashboard**](skills/pipeline-dashboard) | 招聘管道看板：岗位×阶段漏斗+停滞预警+转化率，HTML可视化（多维表格当DB） | Python，输出 HTML |
+| [**print-resume**](skills/print-resume) | 候选人简历静默直打：归档库定位 → 自动截简历部分（简历+作品集合订本场景）→ SumatraPDF 直打，doc 自动转 PDF + 薪酬脱敏兜底 | Python + PyMuPDF + SumatraPDF |
+| [**position-retro**](skills/position-retro) | 岗位卡点复盘：事实层脚本 join 六源（群推送/ATS面试/面评全文/评估结论/归档/IM信号）→ 五类分诊 → 分诊卡 + 可证伪预测台账 | Python + 飞书 hire/im API |
 
 ### 飞书 API 契约层 Skill
 
@@ -38,6 +40,15 @@
 |-------|------|-----------|
 | [**neat-freak**](skills/neat-freak) | 会话收尾时对项目文档和 Agent 记忆做"洁癖级"审查与同步，跨平台（Claude Code / Codex / OpenCode / OpenClaw） | 纯文档，无依赖 |
 | [**storage-analyzer**](skills/storage-analyzer) | 只读扫描磁盘占用，生成交互式 HTML 报告，支持网页上一键清理（移废纸篓/直接删），macOS + Windows | Python 3 标准库，零第三方依赖 |
+
+## 招聘作战台（Workbench）
+
+[**workbench/**](workbench) — 配套的本地 Web 指挥台：把每日对账数据渲染成 **作战 / 管道 / 候选人 / 保温催收** 四页，支持决策与保温触达的写回闭环——不只是看板，是能"看 → 决定 → 记录"的工具。
+
+- 单文件前端（vanilla JS，daisyUI/Tailwind 本地化离线可用）+ Node 零依赖后端，仅绑定 127.0.0.1
+- 设计纪律：「晨间纸质作战简报」——为 2 分钟一瞥设计，异常必须长得异常，行动与信息同位
+- 自带三个验收脚本：`_shots.mjs`（四页断言+截图）/ `_probe.mjs`（布局 16 项）/ `_audit.mjs`（对比度/键盘/写回取证），改版必跑全绿——详见 [workbench/AGENTS.md](workbench/AGENTS.md)
+- 启动：`node workbench/server.mjs` 或双击 `workbench/启动招聘工作台.bat`（数据依赖你自己项目里的 `notes/_daily_review.json`，契约见 daily-recruit-report skill）
 
 ## 设计理念
 
@@ -100,12 +111,17 @@ agent-skills/
 │   ├── candidate-nurture/    ← 候选人保温+面评催收（Python 保温状态机）
 │   ├── talent-profile/       ← 候选人匹配覆盖图（Python）
 │   ├── pipeline-dashboard/   ← 招聘管道看板（Python）
+│   ├── print-resume/         ← 简历静默直打（PyMuPDF + SumatraPDF）
+│   │   └── scripts/lib/      ← 自包含 hire API 封装（手工维护）
+│   ├── position-retro/       ← 岗位卡点复盘（Python，六源 join）
+│   │   └── scripts/lib/
 │   ├── lark-hire/            ← 飞书招聘 API 契约层
 │   ├── lark-calendar-contact/← 飞书日历+通讯录 API 契约层
 │   ├── lark-shared/          ← 飞书鉴权+CLI 契约层
 │   ├── lark-mail/            ← 飞书邮箱 API 契约层
 │   ├── neat-freak/           ← 文档/记忆洁癖审查（纯文档）
 │   └── storage-analyzer/     ← 磁盘占用分析（Python 标准库）
+└── workbench/                ← 招聘作战台（本地 Web 指挥台：Node 零依赖 + 单文件前端）
 ```
 
 > 注：本仓库不再包含 `notes/` 目录——招聘主线 skill 运行期依赖的核心脚本（`_hire.py`/`_lark_shared.py`/`_daily_review.py` 等）在消费方项目的 `notes/` 下，通过 `PROJECT_ROOT` 注入（见上文环境变量说明）。

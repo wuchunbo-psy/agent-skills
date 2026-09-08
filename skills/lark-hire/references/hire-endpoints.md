@@ -235,6 +235,19 @@ att_id = r.json()["data"]["id"]
 
 **⚠️ 删除附件 API 不存在**：unknown-file 附件一旦传上去删不掉。第一次就要传对文件名。
 
+### GET /open-apis/hire/v1/attachments/{attachment_id}
+
+查附件信息（含下载地址）。**2026-09-08 实测可用**（print_resume.py ATS 兜底链使用中）。
+
+```bash
+MSYS_NO_PATHCONV=1 lark-cli api GET /open-apis/hire/v1/attachments/7680823515982301446?type=1 --as bot
+```
+
+- **参数**：`attachment_id`（路径）；`type`（query，可选）：1 简历附件（默认）/ 2 作品附件 / 3 通用附件
+- **返回**：`data.attachment` = `{id, url, name, mime, create_time}`；`url` 为下载地址，**有效期 30 分钟**，requests 直拉（无需再鉴权）
+- ⚠️ `mime` 不可靠（实测 `.doc` 标成 `application/vnd.ms-powerpoint`），判真实格式看文件头：`%PDF`=PDF、`D0CF11E0`=老版 doc/ppt/xls、`PK\x03\x04`=OOXML
+- 附件列表来源：`GET /talents/{talent_id}` → `resume_attachment_list`（`{ID, Name, Mime, CreateTime}`，按 `CreateTime` 取最新）；投递视角更可靠的是 `GET /applications/{id}` → `talent_attachment_resume_id`
+
 ## Document AI（简历解析）
 
 ### POST /open-apis/document_ai/v1/resume/parse

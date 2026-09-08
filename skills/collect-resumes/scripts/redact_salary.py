@@ -41,6 +41,8 @@ FILL_COLOR = (1, 1, 1)
 
 # 图片型 PDF 渲染 DPI（薪酬定位需要足够清晰，200dpi 够 OCR）
 RENDER_DPI = 200
+# OCR 渲染像素安全上限：PIL DecompressionBomb 默认上限约 1.79 亿，留余量
+MAX_OCR_RENDER_PIXELS = 170_000_000
 
 
 def redact_pdf(pdf_path, patterns=None, dry_run=False, ocr_pages=None):
@@ -96,8 +98,24 @@ def redact_pdf(pdf_path, patterns=None, dry_run=False, ocr_pages=None):
 
 
 def _is_image_pdf(doc):
-    """检测是否是图片型 PDF：文本层字符少 或 页面以图片为主。"""
-    total_text_len = sum(len(page.get_text().strip()) for page in doc)
+    """检测是否是图片型 PDF：文本层字符少 或 页面以图片为主。
+
+    2026-09-03：有足量可读中文（≥200字）的文档不再判为图片型。
+    半加密 BOSS PDF（姓名token化但经历可读）的可读文本层已被文本路径全量扫过，
+    再走 OCR 纯属白跑——实测一批 6 份 BOSS 简历每份多耗几十秒（模型加载+渲染
+    3页+OCR），命中全 0。全加密/纯图片型文档可读中文≈0，仍走 OCR（薪酬可能
+    只在渲染层可见）。
+    """
+    cjk = 0
+    total_text_len = 0
+    for page in doc:
+        t = page.get_text()
+        total_text_len += len(t.strip())
+        for ch in t:
+            if '\u4e00' <= ch <= '\u9fff':
+                cjk += 1
+                if cjk >= 200:
+                    return False
     if total_text_len < 50:  # 几乎无文本 → 扫描件/纯图片
         return True
     # 检查是否有 BOSS token 行（文本层是乱码）
@@ -128,6 +146,8 @@ def _get_ocr_engine():
         pass
     try:
         import pytesseract
+        from tesseract_path import configure_pytesseract
+        configure_pytesseract(pytesseract)
         pytesseract.get_tesseract_version()  # 测试二进制是否可用
         return pytesseract, "pytesseract"
     except Exception:
@@ -225,7 +245,6 @@ def _redact_pdf_via_ocr(pdf_path, patterns=None, dry_run=False, ocr_pages=None):
     hits = []
     modified = False
     zoom = RENDER_DPI / 72  # PDF 默认 72dpi
-    mat = fitz.Matrix(zoom, zoom)
     tmpdir = tempfile.mkdtemp(prefix="_redact_ocr_")
 
     try:
@@ -234,7 +253,14 @@ def _redact_pdf_via_ocr(pdf_path, patterns=None, dry_run=False, ocr_pages=None):
             print(f"  ℹ️ 图片型PDF共{len(doc)}页，只OCR前{pages_to_scan}页（简历信息页；全页扫用 --ocr-pages 0）")
         for page_num in range(pages_to_scan):
             page = doc[page_num]
-            pix = page.get_pixmap(matrix=mat)
+            # 美术作品集常见超长图拼页（如1080x24851pt），满 DPI 渲染会超 PIL
+            # DecompressionBomb 上限（约1.79亿像素）直接崩；按面积自动降 zoom
+            area = page.rect.width * page.rect.height
+            page_zoom = min(zoom, (MAX_OCR_RENDER_PIXELS / area) ** 0.5) if area > 0 else zoom
+            if page_zoom < zoom:
+                print(f"  ℹ️ p{page_num+1} 页面超大({page.rect.width:.0f}x{page.rect.height:.0f}pt)，"
+                      f"渲染降至{page_zoom*72:.0f}dpi（PIL 解压炸弹保护内）")
+            pix = page.get_pixmap(matrix=fitz.Matrix(page_zoom, page_zoom))
             img_path = os.path.join(tmpdir, f"p{page_num+1}.png")
             pix.save(img_path)
 
@@ -452,7 +478,7 @@ def _doc_to_pdf(doc_path):
     return None
 
 
-def redact_doc(doc_path, patterns=None, dry_run=False):
+def redact_doc(doc_path, patterns=None, dry_run=False, ocr_pages=None):
     """老式 .doc 薪酬处理。
 
     返回 (命中数, modified)。
@@ -469,7 +495,7 @@ def redact_doc(doc_path, patterns=None, dry_run=False):
     # 手动 Word COM 转 PDF 才放行——现在固化为脚本能力）
     pdf_path = _doc_to_pdf(doc_path)
     if pdf_path:
-        hits, modified = redact_pdf(pdf_path, patterns, dry_run, args.ocr_pages)
+        hits, modified = redact_pdf(pdf_path, patterns, dry_run, ocr_pages)
         if not dry_run:
             # 原 .doc 已被 PDF 替代；删除失败仅警告（保留会导致闸门再次拦截）
             try:
@@ -648,6 +674,91 @@ def _check_rar_safety(rar_path):
     return None
 
 
+def _collect_colon_spans(page, hit_rects, max_gap=40.0):
+    """同一命中的标签矩形与数字矩形之间，若只夹着"冒号/空白"则一并纳入脱敏。
+
+    2026-08-27 用户反馈：『期望薪资：25-30K』脱敏后残留孤零零的"："。
+    两种排版成因，两类判据：
+    ① 冒号是独立 span（标签/冒号/数字被拆成多个文本块）：该 span 文本 strip 后
+       仅含 [：:\\s]，且被组内两个矩形左右夹住 → 收编其 bbox；
+    ② 冒号嵌在单个 span 内部、正则只命中前缀+后缀（如『月薪：15K』整串一个
+       span，regex 只吃到『月薪』和『15K』）：对两矩形同线间隙做 get_textbox，
+       验证内容纯为分隔符后才把间隙纳入覆盖。
+
+    两类都是先做精确文本验证再扩大覆盖，不做无条件几何外扩；隔壁字段
+    （如"期望城市：广州"）不满足"被同一命中组夹住"，不受影响。
+    """
+    if len(hit_rects) < 2:
+        return []
+    uniq, seen = [], set()
+
+    def _add(r):
+        k = (round(r.x0, 1), round(r.y0, 1), round(r.x1, 1), round(r.y1, 1))
+        if k not in seen:
+            seen.add(k)
+            uniq.append(fitz.Rect(k))
+
+    def _h_overlap(a, b):
+        return min(a.y1, b.y1) - max(a.y0, b.y0)
+
+    # 同线的左右配对（按 x 排序后的相邻对足够，但保持全对比稳妥）
+    ordered = sorted(hit_rects, key=lambda r: r.x0)
+    try:
+        d = page.get_text("dict")
+    except Exception:
+        d = {}
+
+    def _flank_pairs():
+        """产出 (A,B)：A 在 B 左、同线高度重叠过半。不设总距上限——
+        标签/冒号/数字三段式排版里 A→B 总距可以超过单侧近邻度阈值，
+        近邻度由两类消费端各自用 per-side 距离把关。"""
+        for i, a in enumerate(ordered):
+            for b in ordered[i + 1:]:
+                if _h_overlap(a, b) > min(a.height, b.height) * 0.5:
+                    yield a, b
+
+    # ① 独立冒号 span 收编
+    sep_spans = []
+    for block in d.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                stext = (span.get("text") or "").strip()
+                if stext and not re.search(r"[^\s：:]", stext):
+                    bbox = span.get("bbox")
+                    if bbox and len(bbox) == 4:
+                        sep_spans.append(fitz.Rect(bbox))
+    for s in sep_spans:
+        flanked = any(a.x1 <= s.x0 + 2 and s.x1 <= b.x0 + 2
+                      and _h_overlap(a, s) > s.height * 0.5
+                      and _h_overlap(s, b) > s.height * 0.5
+                      and (s.x0 - a.x1) <= max_gap
+                      and (b.x0 - s.x1) <= max_gap
+                      for a, b in _flank_pairs())
+        if flanked:
+            _add(s)
+
+    # ② 跨 span 间隙验证：间隙内容纯分隔符才覆盖间隙本身
+    SEP = re.compile(r"^[\s：:]+$")
+    for a, b in _flank_pairs():
+        if b.x0 - a.x1 <= 1.5 or b.x0 - a.x1 > 60:
+            continue  # 无可见间隙 / 间距过宽不像同一字段内
+        y0 = max(a.y0, b.y0) + 1
+        y1 = min(a.y1, b.y1) - 1
+        if y1 - y0 < 4:
+            continue
+        clip = fitz.Rect(a.x1, y0, b.x0, y1)
+        try:
+            gap_text = page.get_textbox(clip)
+        except Exception:
+            continue
+        if gap_text.strip() and SEP.match(gap_text.strip()):
+            _add(clip)
+
+    return uniq
+
+
 def _search_page(page, regex):
     """在 PDF 页面中搜索薪酬文本，返回 [(match_text, [rects])]。
     兼容文本被分割到多个位置的情况（跨行/跨列/跨文本块）。
@@ -700,6 +811,9 @@ def _search_page(page, regex):
             if key not in seen:
                 seen.add(key)
                 unique.append(r)
+        # 标签与数字矩形之间的冒号/空白分隔 span 一并收编（2026-08-27）
+        if len(unique) >= 2:
+            unique.extend(_collect_colon_spans(page, unique))
         results.append((match_text, unique))
 
     return results
@@ -741,6 +855,46 @@ def _locate_match_in_dict(page, text, start, end):
 
 # ---- CLI ----
 
+def render_pdf_for_vision(pdf_path, pages=3):
+    """--vision 模式：渲染图片型PDF为PNG供主会话视觉定位薪酬。
+
+    OCR 慢（大图分钟级）或不可用时的快路径：渲染前N页 → 主会话看图报
+    bbox → --redact-rects @file 覆盖。dpi 固定 120（可读性与坐标精度平衡），
+    超大页按 MAX_OCR_RENDER_PIXELS 自动降并回填实际 dpi（bbox 必须按清单里
+    回填的 dpi 报，坐标换算依赖它）。
+    """
+    if not os.path.isfile(pdf_path) or not pdf_path.lower().endswith(".pdf"):
+        print(f"❌ --vision 只支持 PDF 文件: {pdf_path}", file=sys.stderr)
+        sys.exit(1)
+    doc = fitz.open(pdf_path)
+    out_dir = os.path.join(os.path.dirname(os.path.abspath(pdf_path)), "_vision_定位")
+    os.makedirs(out_dir, exist_ok=True)
+    base = re.sub(r"\.pdf$", "", os.path.basename(pdf_path), flags=re.IGNORECASE)
+    base = re.sub(r"[^\w\u4e00-\u9fff.-]", "_", base) or "page"
+    entries = []
+    n = len(doc) if pages == 0 else min(len(doc), pages)
+    for i in range(n):
+        page = doc[i]
+        area = page.rect.width * page.rect.height
+        zoom = min(120 / 72, (MAX_OCR_RENDER_PIXELS / area) ** 0.5) if area > 0 else 120 / 72
+        dpi = round(zoom * 72)
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+        path = os.path.join(out_dir, f"{base}_p{i+1}.png")
+        pix.save(path)
+        entries.append({"page": i + 1, "dpi": dpi})
+        print(f"  已渲染: {path} ({pix.width}x{pix.height}px, dpi={dpi})")
+    doc.close()
+    manifest = os.path.join(out_dir, f"{base}_rects.json")
+    with open(manifest, "w", encoding="utf-8") as f:
+        json.dump([{"page": e["page"], "dpi": e["dpi"], "bbox": [0, 0, 0, 0]} for e in entries], f, ensure_ascii=False, indent=1)
+    print(
+        "\n下一步（主会话视觉协助流）：\n"
+        f"  1. Read 上面的 PNG，找出每处薪酬文本的像素 bbox [x_min,y_min,x_max,y_max]\n"
+        f"  2. 把 {manifest} 里对应条目的 bbox 填上（dpi 保持清单值不动）\n"
+        f'  3. python "{os.path.abspath(__file__)}" "{pdf_path}" --redact-rects @"{manifest}"\n'
+    )
+
+
 def redact_pdf_rects(pdf_path, rects_json, dry_run=False):
     """用外部传入的坐标直接在 PDF 上画白色矩形覆盖。
 
@@ -755,7 +909,16 @@ def redact_pdf_rects(pdf_path, rects_json, dry_run=False):
     page 是 1-based 页码，dpi 是渲染时的 DPI（用于坐标反推），
     bbox 是该 DPI 下渲染图片的像素坐标。
     """
-    rects = json.loads(rects_json) if isinstance(rects_json, str) else rects_json
+    if isinstance(rects_json, str) and rects_json.startswith("@"):
+        with open(rects_json[1:], encoding="utf-8") as f:
+            rects = json.load(f)
+    else:
+        rects = json.loads(rects_json) if isinstance(rects_json, str) else rects_json
+    # 过滤掉清单模板里未填的占位行（bbox 全 0）
+    rects = [r for r in rects if any(r.get("bbox") or [])]
+    if not rects:
+        print("❌ 未提供有效 bbox（--redact-rects 里没有填了坐标的条目）", file=sys.stderr)
+        sys.exit(1)
     doc = fitz.open(pdf_path)
     hits = []
     modified = False
@@ -795,25 +958,46 @@ def redact_pdf_rects(pdf_path, rects_json, dry_run=False):
 def main():
     parser = argparse.ArgumentParser(description="简历薪酬脱敏（白色覆盖，禁止黑色）+ rar转zip")
     parser.add_argument("file", nargs="?", help="PDF / DOCX / ZIP / RAR / 7z 文件路径（单文件模式）")
-    parser.add_argument("--dir", help="目录模式：递归脱敏该目录下所有 pdf/docx/zip/rar（批量，一条命令代替逐个跑）")
+    parser.add_argument("--dir", nargs="+", help="目录模式：递归脱敏目录下简历文件；可传多个目录一次跑（OCR 模型进程内只加载一次，2026-08-25 提速）")
     parser.add_argument("--patterns", nargs="*", help="自定义薪酬关键词（默认用 verify_archive 同款正则）")
     parser.add_argument("--dry-run", action="store_true", help="只报告命中，不改文件")
     parser.add_argument("--output", help="输出文件路径（rar转zip时指定规范命名；zip默认原地覆盖）")
     parser.add_argument("--report-json", help="批量 --dir 模式：机器可读 JSON 报告输出路径")
-    parser.add_argument("--redact-rects", help="外部传入薪酬坐标JSON（图片型PDF专用）：[{page,dpi,bbox:[x,y,x,y]}]")
+    parser.add_argument("--redact-rects", help="外部传入薪酬坐标JSON（图片型PDF专用）：[{page,dpi,bbox:[x,y,x,y]}]，支持 @file 路径从JSON文件读（长坐标避免argv转义）")
     parser.add_argument("--ocr-pages", type=int, default=None, help="图片型PDF的OCR页数上限（默认3=只查简历信息页；0=全页逐页扫，慢）")
+    parser.add_argument("--vision", action="store_true", help="视觉定位模式（单文件）：渲染图片型PDF待定位页为PNG，主会话看图报bbox后再用 --redact-rects @file 覆盖")
+    parser.add_argument("--vision-pages", type=int, default=3, help="--vision 渲染页数上限（默认3=简历信息页；0=全部页）")
     args = parser.parse_args()
 
     if args.dir:
-        if args.output or args.redact_rects:
-            print("❌ --dir 批量模式不支持 --output / --redact-rects（这两个是单文件专用）", file=sys.stderr)
+        if args.output or args.redact_rects or args.vision:
+            print("❌ --dir 批量模式不支持 --output / --redact-rects / --vision（这些是单文件专用）", file=sys.stderr)
             sys.exit(1)
-        _redact_dir(args)
+        dirs = args.dir
+        any_failed = False
+        for i, d in enumerate(dirs):
+            sub = argparse.Namespace(**vars(args))
+            sub.dir = d
+            if args.report_json and len(dirs) > 1:
+                root, ext = os.path.splitext(args.report_json)
+                sub.report_json = f"{root}__dir{i}{ext or '.json'}"
+            try:
+                _redact_dir(sub)
+            except SystemExit as e:
+                if e.code:
+                    any_failed = True
+        if len(dirs) > 1:
+            print(f"\n{'✅ 多目录批量全部完成' if not any_failed else '🔴 多目录批量有失败（见上）'}：共 {len(dirs)} 个目录")
+        sys.exit(1 if any_failed else 0)
         return
 
     if not args.file:
         parser.print_help()
         sys.exit(1)
+
+    if args.vision:
+        render_pdf_for_vision(args.file, pages=args.vision_pages)
+        return
 
     _redact_one(args.file, args)
 
@@ -982,7 +1166,7 @@ def _run_redact(filepath, args):
     if lower.endswith('.doc'):
         # .doc 是老式二进制格式：antiword 只能提取文本，无法涂白矩形
         # 扫描薪酬命中即报告并阻断（fail-closed），提示转 PDF 后脱敏
-        return redact_doc(filepath, args.patterns, args.dry_run)
+        return redact_doc(filepath, args.patterns, args.dry_run, args.ocr_pages)
     if lower.endswith('.zip'):
         return redact_zip(filepath, args.patterns, args.dry_run)
     if lower.endswith(('.rar', '.7z')):

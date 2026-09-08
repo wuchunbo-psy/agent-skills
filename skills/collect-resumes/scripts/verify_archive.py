@@ -213,6 +213,9 @@ def collect(root):
         return res
 
     for d, dirs, fs in os.walk(root):
+        # _vision_定位/ 是 redact_salary --vision 的渲染工作区（PNG+rects清单），
+        # 不是简历资产；闸门数量口径与文件扫描都不计，否则误报"独立图片提取阻断"
+        dirs[:] = [x for x in dirs if x != "_vision_定位"]
         for f in fs:
             full = os.path.join(d, f)
             low = f.lower()
@@ -436,16 +439,7 @@ def _merge_split_batches(target):
                 print(f"  ⚠️ {w}")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("target")
-    ap.add_argument("--no-salary", action="store_true")
-    ap.add_argument("--names-only", action="store_true")
-    ap.add_argument("--no-cache", action="store_true")
-    ap.add_argument("--manifest", help="collection_manifest.json 路径（闭环对账）")
-    ap.add_argument("--report-json", help="输出机器可读 JSON 报告到此路径")
-    args = ap.parse_args()
-
+def _verify_one(args):
     # 2026-07-29：先把 _暂定 中转目录自动 rename 为 _{N}份（在 collect 之前，使 collect 看到最终目录）。
     # resolve_records 落 {M.DD}_暂定/（N 在单条 resolve 时未知），闸门收尾时数人头得到 N 后 rename，
     # 使 _N份 标注永远自洽。rename 在校验前做，fail-closed 语义不变（数量不符仍 STOP）。
@@ -479,6 +473,8 @@ def main():
         # 递归、按姓名去重、只数简历/压缩包文件。两套口径会自相打架
         # （_finalize rename 成 _2份、闸门数出 1 人 → 自我阻断）。
         count_mismatch = False
+        scattered = False
+        art_scatter = False
         if is_single_file:
             print("【数量闸门】单文件模式，跳过（只做姓名/薪酬/格式校验）")
         else:
@@ -486,6 +482,8 @@ def main():
             batch_dirs = {}   # abspath -> 目录名（含 _N份）
             stray = []
             for d, dirs, fs in os.walk(args.target):
+                # _vision_定位/ 是 --vision 渲染工作区（PNG+rects清单），不是简历资产
+                dirs[:] = [x for x in dirs if x != "_vision_定位"]
                 dn = os.path.basename(d.rstrip("/\\"))
                 if re.search(r"_\d+份$", dn):
                     batch_dirs[d] = dn
@@ -511,6 +509,68 @@ def main():
                 print(f"  🔴 散落文件（不在 _N份 目录内）: {s}")
                 report["errors"].append(f"no_count_label:{os.path.basename(s)}")
                 count_mismatch = True
+
+            # ---- 根级散落检测（2026-08-20 加）----
+            # 上面的 walk 只覆盖 target（当日批次）目录；已收集简历/ 根下不属于任何
+            # _N份/_暂定 的简历类文件（旧版 resolve 无日期段规范 / 手动归档 / 流程中断残留）
+            # 永远不在扫描范围内——7.10~8.17 曾累计 22 个文件散落 5 周无人对账。
+            # 此处向上定位已收集简历/ 根，扫第一层：那里正常应只有目录，出现简历类文件即 STOP。
+            probe = os.path.abspath(args.target)
+            root_dir = probe if os.path.basename(probe) == "已收集简历" else None
+            while root_dir is None:
+                nxt = os.path.dirname(probe)
+                if nxt == probe:
+                    break
+                probe = nxt
+                if os.path.basename(probe) == "已收集简历":
+                    root_dir = probe
+            if root_dir:
+                root_strays = [f for f in os.listdir(root_dir)
+                               if os.path.isfile(os.path.join(root_dir, f))
+                               and (_is_resume_file(f) or f.lower().endswith(ZIP_EXT)
+                                    or f.lower().endswith(RAR_EXT))]
+                for s in root_strays:
+                    print(f"  🔴 散落在已收集简历根、不在任何日期段目录内: {s}")
+                    report["errors"].append(f"root_stray:{s}")
+                if root_strays:
+                    scattered = True
+
+            # ---- 美术岗散件检测（2026-09-03 加，用户定稿：规则进脚本不靠记忆）----
+            # archive-naming.md：美术岗简历+作品分开发的必须打包为
+            # {姓名}_{岗位}_{年限}_简历加作品.zip（包内简历先脱敏）。
+            # 同一姓名散放 简历类(pdf/docx/doc) + 作品类(pptx/jpg/png/psd/zip/rar/7z...) → STOP。
+            # 豁免：视频作品(mp4/mov/avi/mkv/webm)按 9-03 定稿独立保留不打包；
+            #       zip 内成员(!)不是散件；仅对路径含"美术端"的目录生效。
+            art_scatter = False
+            if "美术端" in os.path.abspath(args.target):
+                _ART_RES = (".pdf", ".docx", ".doc")
+                _ART_WORK = (".pptx", ".ppt", ".jpg", ".jpeg", ".png", ".psd",
+                             ".zip", ".rar", ".7z", ".gif", ".bmp", ".webp")
+                _ART_VIDEO = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+                _art_groups = {}
+                for d, dirs, fs in os.walk(args.target):
+                    # _vision_定位/ 是 --vision 渲染工作区，不是简历资产
+                    dirs[:] = [x for x in dirs if x != "_vision_定位"]
+                    for f in fs:
+                        low = f.lower()
+                        if low.endswith(_ART_VIDEO) or not low.endswith(_ART_RES + _ART_WORK):
+                            continue
+                        if re.search(r"temp|临时|tmp", f, re.IGNORECASE):
+                            continue
+                        name_head = f.split("_", 1)[0].strip()
+                        if not name_head:
+                            continue
+                        kind = "resume" if low.endswith(_ART_RES) else "work"
+                        _art_groups.setdefault(name_head, {"resume": 0, "work": 0, "files": []})
+                        _art_groups[name_head][kind] += 1
+                        _art_groups[name_head]["files"].append(f)
+                for _name, _g in sorted(_art_groups.items()):
+                    if _g["resume"] and _g["work"]:
+                        art_scatter = True
+                        print(f"  🔴 美术岗散件未打包: {_name}（{', '.join(_g['files'])}）"
+                              f" → 合并为 {{姓名}}_{{岗位}}_{{年限}}_简历加作品.zip（包内简历须先脱敏）")
+                if art_scatter:
+                    report["errors"].append("art_scatter")
 
         # ---- 姓名 + 薪酬闸门 ----
         print("\n【姓名闸门 + 薪酬闸门 + 格式验证】")
@@ -657,10 +717,13 @@ def main():
 
         # ---- 最终判定 ----
         print("\n" + "=" * 40)
-        stop = bool(count_mismatch or sal_hits or manifest_bad)
+        stop = bool(count_mismatch or sal_hits or manifest_bad or scattered
+                    or art_scatter)
         if stop:
             reasons = []
             if count_mismatch: reasons.append("数量不符")
+            if scattered: reasons.append("简历散落未入日期段")
+            if art_scatter: reasons.append("美术岗散件未打包")
             if sal_hits: reasons.append("薪酬残留")
             if manifest_bad: reasons.append("manifest闭环未过")
             print(f"🔴 STOP — {'/'.join(reasons)}，修复后再进评估")
@@ -675,6 +738,36 @@ def main():
         sys.exit(1 if stop else 0)
     finally:
         res.cleanup()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("target", nargs="+", help="批次目录（可传多个一次跑：manifest 只读一次、SHA 缓存进程内复用，2026-08-25 提速）")
+    ap.add_argument("--no-salary", action="store_true")
+    ap.add_argument("--names-only", action="store_true")
+    ap.add_argument("--no-cache", action="store_true")
+    ap.add_argument("--manifest", help="collection_manifest.json 路径（闭环对账）")
+    ap.add_argument("--report-json", help="输出机器可读 JSON 报告到此路径（多目标时按序号后缀分文件）")
+    args = ap.parse_args()
+
+    targets = args.target
+    overall = 0
+    for i, t in enumerate(targets, 1):
+        args.target = t
+        sub = argparse.Namespace(**vars(args))
+        if args.report_json and len(targets) > 1:
+            root, ext = os.path.splitext(args.report_json)
+            sub.report_json = f"{root}__t{i}{ext or '.json'}"
+        if len(targets) > 1:
+            print(f"\n━━━━━━ 闸门 [{i}/{len(targets)}] {t} ━━━━━━")
+        try:
+            _verify_one(sub)
+        except SystemExit as e:
+            if e.code:
+                overall = 1
+    if len(targets) > 1:
+        print(f"\n{'🟢 全部目录通过' if overall == 0 else '🔴 有目录未通过'}（共 {len(targets)} 个）")
+    sys.exit(overall)
 
 
 if __name__ == "__main__":

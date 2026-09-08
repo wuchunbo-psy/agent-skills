@@ -17,7 +17,7 @@ import path from 'node:path';
 import {
   readManifest, writeManifestAtomic, getRecord, upsertRecord, transitionToExcluded,
 } from './lib/manifest.mjs';
-import { mdd, recordDate } from './lib/dates.mjs';
+import { mdd, recordDate, archiveDateSegment } from './lib/dates.mjs';
 import {
   sha256File, detectTypeFromBuffer, commitVerifiedFile, typeMatchesExtension,
 } from './lib/file_identity.mjs';
@@ -275,9 +275,9 @@ async function main() {
       // 仅当 target_dir 本身以「已收集简历」结尾（无日期段）才补 M.DD_暂定；
       // 已带日期段（如 已收集简历/8.17_暂定）不能再套一层（2026-08-17 双嵌套 bug）
       if (td.replace(/\/$/, '').endsWith('已收集简历')) {
-        td = `${td.replace(/\/$/, '')}/${mdd(recordDate(rec))}_暂定`;
+        td = `${td.replace(/\/$/, '')}/${archiveDateSegment(rec)}_暂定`;
       } else if (td.endsWith('_暂定') && !fs.existsSync(td)) {
-        const day = mdd(recordDate(rec));
+        const day = archiveDateSegment(rec);
         const existN = fs.existsSync(parent) && fs.readdirSync(parent)
           .filter(n => n.startsWith(`${day}_`) && /_\d+份$/.test(n)).sort()[0];
         td = existN ? `${parent}/${existN}` : `${parent}/${day}_暂定`;
@@ -326,20 +326,44 @@ async function main() {
       if (oc.ok) { succeeded.push(oc.rid); continue; }
       const e = oc.e;
       if (e.conflictPath) {
-        // 同人同日重复投递（同名目标已存在、内容不同，多为候选人当天重发同份简历）：
-        // 删 conflict 副本（未脱敏内容不得残留在归档目录），record 结构化排除。
-        // 真有新版简历的情况：源邮件仍在（message_id 可回溯），resolve --new-version 重开。
-        try { fs.unlinkSync(e.conflictPath); } catch {}
+        // 同名目标已存在且内容不同。两类场景分流（2026-08-20 刘小六作品集误杀教训）：
+        // ① 两条记录 original_filename 不同（如"作品集-【…】姓名_年限.pdf" vs "【…】姓名_年限.pdf"）
+        //    = 同日发的**不同材料**（简历+作品集）→ 冲突副本加区分后缀归档，不排除
+        // ② original_filename 相同 = 当天重发同份简历 → 删副本、结构化排除（原逻辑）。
+        //    真有新版简历：源邮件仍在（message_id 可回溯），resolve --new-version 重开。
         try {
           const cur = readManifest(manifestPath);
           const rec = cur.records[oc.rid];
+          const twin = Object.values(cur.records).find(x =>
+            x.record_id !== rec.record_id && x.status === 'archived' &&
+            x.target_filename === rec.target_filename && x.target_dir === rec.target_dir);
+          const sameOriginal = twin && (twin.original_filename || '') === (rec.original_filename || '');
+          if (!sameOriginal) {
+            const suffix = /作品集|portfolio/i.test(rec.original_filename || '') ? '_作品集' : '_2';
+            const dot = rec.target_filename.lastIndexOf('.');
+            const renamed = rec.target_filename.slice(0, dot) + suffix + rec.target_filename.slice(dot);
+            const newTarget = path.join(rec.target_dir, renamed).replace(/\\/g, '/');
+            fs.renameSync(e.conflictPath, newTarget);
+            rec.target_filename = renamed;
+            cur.records[oc.rid] = rec;
+            writeManifestAtomic(manifestPath, upsertRecord(cur, rec));
+            fs.mkdirSync(RESULTS_DIR, { recursive: true });
+            fs.writeFileSync(path.join(RESULTS_DIR, `${oc.rid.replace(/[:*?"<>|]/g, '_')}.result.json`), JSON.stringify({
+              record_id: oc.rid, outcome: 'committed', sha256: sha256File(newTarget),
+              target_path: newTarget, at: new Date().toISOString(),
+            }, null, 2));
+            console.log(`  ♻️ 同名不同材料（original_filename 不同），改名 ${renamed} 归档`);
+            succeeded.push(oc.rid);
+            continue;
+          }
+          fs.unlinkSync(e.conflictPath);
           const updated = transitionToExcluded(rec, 'SAMEDAY_CONFLICT',
             `同名目标已存在且内容不同，判同日重复投递，保留已归档版本。目标: ${rec.target_filename}`);
           writeManifestAtomic(manifestPath, upsertRecord(cur, updated));
           console.log(`  ⏭️ 同日冲突已排除: ${rec.target_filename}`);
           conflicts.push(oc.rid);
         } catch (exErr) {
-          console.error(`  🔴 冲突排除失败: ${exErr.message.slice(0, 80)}`);
+          console.error(`  🔴 冲突处理失败: ${exErr.message.slice(0, 80)}`);
           failed.push({ id: oc.rid, error: e.message.slice(0, 120) });
         }
       } else {

@@ -49,7 +49,8 @@ export function buildTasks(args) {
   let target;
   if (recordsFlag) {
     const ids = new Set(recordsFlag.split(',').map(s => s.trim()));
-    target = linkRecs.filter(r => ids.has(r.record_id));
+    // 跳过已 archived：重跑 --records 不重复下载已闭环的记录
+    target = linkRecs.filter(r => ids.has(r.record_id) && r.status !== 'archived');
   } else {
     target = linkRecs.filter(r => r.status === 'verified');
   }
@@ -60,8 +61,43 @@ export function buildTasks(args) {
     record_id: r.record_id,
     target_dir: r.target_dir || null,
     target_filename: r.target_filename || null,
+    // 2026-08-20：链接旁的原始附件名+大小（verify_mails 提取），用于下载前查 Downloads 本地复用
+    original_filename: r.original_filename || null,
+    attach_size_mb: r.attach_size_mb || null,
   }));
   return { tasks, manifestPath, manifestDriven: true };
+}
+
+/**
+ * 在 Downloads 找用户已手动下载的同一附件（2026-08-20 加）。
+ * 背景：大附件（QQ 超大附件常 100MB+）浏览器下载受服务器限速动辄几分钟~十几分钟，
+ * 用户往往已经手动下载到 Downloads——Agent 不看本地直接重新下载 = 重复劳动。
+ * 匹配规则：文件名 == 链接旁的原始附件名（或浏览器重复下载的「base (N).ext」变体），
+ * 且（有大小提示时）体积差 ≤ max(2MB, 5%)——防同名不同文件误复用。
+ * @returns {string|null} 匹配到的本地文件绝对路径
+ */
+export function findLocalInDownloads(task, downloadsDir = DOWNLOADS_DIR) {
+  if (!task.original_filename || !fs.existsSync(downloadsDir)) return null;
+  const dot = task.original_filename.lastIndexOf('.');
+  const base = task.original_filename.slice(0, dot);
+  const ext = task.original_filename.slice(dot).toLowerCase();
+  const candidates = fs.readdirSync(downloadsDir).filter(fn => {
+    const low = fn.toLowerCase();
+    if (!low.endsWith(ext)) return false;
+    const stem = low.slice(0, low.length - ext.length);
+    return stem === base.toLowerCase() || new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\(\\d+\\)$`, 'i').test(stem);
+  });
+  for (const fn of candidates) {
+    const fp = path.join(downloadsDir, fn);
+    if (!fs.statSync(fp).isFile()) continue;
+    if (task.attach_size_mb) {
+      const actualMb = fs.statSync(fp).size / 1048576;
+      const tolerance = Math.max(2, task.attach_size_mb * 0.05);
+      if (Math.abs(actualMb - task.attach_size_mb) > tolerance) continue;
+    }
+    return fp;
+  }
+  return null;
 }
 
 /**
@@ -100,15 +136,91 @@ async function batchDownload(tasks) {
   }
   console.log(`启动浏览器，批量下载 ${tasks.length} 个链接...\n`);
 
-  const browser = await chromium.launch({ headless: true });
+  // BROWSER_HEADED=1：有头模式启动。headless 指纹易触发网盘风控页（no_button/下载取消），
+  // 反复风控失败时用有头重跑往往一次过（真实浏览器特征）。桌面环境跑批会弹窗，默认仍 headless。
+  const headless = process.env.BROWSER_HEADED !== '1';
+  const browser = await chromium.launch({ headless });
   const context = await browser.newContext({ acceptDownloads: true });
   const page = await context.newPage();
 
   const results = [];
 
+  /**
+   * 把已落盘的文件（Downloads 或复用件）提交进归档：magic bytes 校正扩展名 → mv 到
+   * target_dir/target_filename（已存在不覆盖）→ 写 result.json（merge_results 消费）。
+   * 下载完成与 Downloads 本地复用共用此闭环。
+   */
+  const commitToArchive = (task, savePath, tag) => {
+    let finalPath = savePath;
+    // magic bytes 校正扩展名（2026-08-17）：QQ 超大附件的 resolve target 扩展名是猜的
+    // （PDF/RAR 都可能被存成 .zip），按文件头纠正，并同步回写 manifest 的 target_filename
+    // （merge_results 有路径绑定校验，两边不一致会拒合并）
+    const detected = detectTypeFromBuffer(fs.readFileSync(savePath));
+    if (detected && detected !== 'unknown') {
+      const extByType = { pdf: '.pdf', zip: '.zip', rar: '.rar', '7z': '.7z', image: null };
+      const wantExt = extByType[detected];
+      if (wantExt && !task.target_filename.toLowerCase().endsWith(wantExt)) {
+        const base = task.target_filename.replace(/\.[^.]+$/, '');
+        const renamed = base + wantExt;
+        console.log(`${tag} ℹ 实际类型 ${detected}，扩展名校正: ${path.basename(task.target_filename)} → ${renamed}`);
+        const mm = readManifest(MANIFEST_DEFAULT);
+        if (mm.records[task.record_id]) {
+          mm.records[task.record_id] = { ...mm.records[task.record_id], target_filename: renamed };
+          writeManifestAtomic(MANIFEST_DEFAULT, mm);
+        }
+        task.target_filename = renamed;
+        task.record_filename = renamed;
+      }
+    }
+    const dest = path.join(task.target_dir, task.target_filename).replace(/\\/g, '/');
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    if (fs.existsSync(dest)) {
+      // 已存在不覆盖（与 download_attachment.mjs 的幂等语义一致）
+      console.log(`${tag} ℹ 目标已存在，保留原文件: ${path.basename(dest)}`);
+      fs.unlinkSync(savePath); // 删掉重复副本（Downloads 或临时件）
+    } else {
+      fs.renameSync(savePath, dest);
+    }
+    finalPath = dest;
+    // 写 result.json（格式与 download_attachment.mjs 一致，merge_results.mjs 消费）
+    fs.mkdirSync(RESULTS_DIR, { recursive: true });
+    const safeRecordId = task.record_id.replace(/[:*?"<>|]/g, '_');
+    const resultPath = path.join(RESULTS_DIR, `${safeRecordId}.result.json`);
+    fs.writeFileSync(resultPath, JSON.stringify({
+      record_id: task.record_id,
+      outcome: 'committed',
+      sha256: sha256File(dest),
+      target_path: dest,
+      at: new Date().toISOString(),
+    }, null, 2));
+    return finalPath;
+  };
+
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
     const tag = `[${i + 1}/${tasks.length}] ${task.name}`;
+
+    // ---- Downloads 本地复用（2026-08-20 加）----
+    // 用户手动下载往往比 Playwright 快（QQ 服务器对浏览器限速、无断点续传），
+    // 且大附件常是"提醒用户下载→用户已下→Agent 又重下"的重复劳动。
+    // 命中（文件名+大小匹配）则直接复用本地件提交归档，跳过浏览器；提交失败回退浏览器。
+    let reusedOk = false;
+    if (task.record_id && task.target_dir && task.target_filename) {
+      const local = findLocalInDownloads(task);
+      if (local) {
+        const sizeMB = (fs.statSync(local).size / 1048576).toFixed(1);
+        console.log(`${tag} ♻️ Downloads 已有同名文件 ${path.basename(local)} (${sizeMB}MB)，复用本地件，跳过浏览器下载`);
+        try {
+          const finalPath = commitToArchive(task, local, tag);
+          results.push({ ...task, status: 'ok', reused: true, file: finalPath });
+          reusedOk = true;
+        } catch (e) {
+          console.log(`${tag} ⚠ 本地件提交归档失败（${e.message.slice(0, 80)}），回退浏览器下载`);
+        }
+      }
+    }
+    if (reusedOk) continue;
+
     console.log(`${tag} 打开链接...`);
 
     try {
@@ -173,54 +285,13 @@ async function batchDownload(tasks) {
         console.log(`  ⚠️ 超大附件 ${sizeMB}MB（${path.basename(savePath)}）——本次自动下载完成；下次建议人工下载到 Downloads（浏览器/QQ 客户端更快，可断点续传），Agent 负责归档。`);
       }
 
-      // manifest 驱动的记录：把文件移到 target_dir/target_filename 并写 result.json，
-      // 随后由 main() 自动合并推进 archived（闭环：不写 result.json 状态会永远卡 verified）。
-      // --urls 模式（无 record_id）不走 manifest 闭环，保持原行为（只留 Downloads）。
+      // manifest 驱动的记录：提交进归档（与 Downloads 本地复用共用 commitToArchive 闭环：
+      // 不写 result.json 状态会永远卡 verified）。--urls 模式（无 record_id）不走 manifest 闭环，
+      // 保持原行为（只留 Downloads）。
       let finalPath = savePath;
       if (task.record_id && task.target_dir && task.target_filename) {
-        // magic bytes 校正扩展名（2026-08-17）：QQ 超大附件的 resolve target 扩展名是猜的
-        // （PDF/RAR 都可能被存成 .zip），按文件头纠正，并同步回写 manifest 的 target_filename
-        // （merge_results 有路径绑定校验，两边不一致会拒合并）
-        const detected = detectTypeFromBuffer(fs.readFileSync(savePath));
-        if (detected && detected !== 'unknown') {
-          const extByType = { pdf: '.pdf', zip: '.zip', rar: '.rar', '7z': '.7z', image: null };
-          const wantExt = extByType[detected];
-          if (wantExt && !task.target_filename.toLowerCase().endsWith(wantExt)) {
-            const base = task.target_filename.replace(/\.[^.]+$/, '');
-            const renamed = base + wantExt;
-            console.log(`${tag} ℹ 实际类型 ${detected}，扩展名校正: ${path.basename(task.target_filename)} → ${renamed}`);
-            const mm = readManifest(MANIFEST_DEFAULT);
-            if (mm.records[task.record_id]) {
-              mm.records[task.record_id] = { ...mm.records[task.record_id], target_filename: renamed };
-              writeManifestAtomic(MANIFEST_DEFAULT, mm);
-            }
-            task.target_filename = renamed;
-            task.record_filename = renamed;
-          }
-        }
-        const dest = path.join(task.target_dir, task.target_filename).replace(/\\/g, '/');
         try {
-          fs.mkdirSync(path.dirname(dest), { recursive: true });
-          if (fs.existsSync(dest)) {
-            // 已存在不覆盖（与 download_attachment.mjs 的幂等语义一致）
-            console.log(`${tag} ℹ 目标已存在，保留原文件: ${path.basename(dest)}`);
-            fs.unlinkSync(savePath); // 删掉 Downloads 里的重复副本
-          } else {
-            fs.renameSync(savePath, dest);
-          }
-          finalPath = dest;
-
-          // 写 result.json（格式与 download_attachment.mjs 一致，merge_results.mjs 消费）
-          fs.mkdirSync(RESULTS_DIR, { recursive: true });
-          const safeRecordId = task.record_id.replace(/[:*?"<>|]/g, '_');
-          const resultPath = path.join(RESULTS_DIR, `${safeRecordId}.result.json`);
-          fs.writeFileSync(resultPath, JSON.stringify({
-            record_id: task.record_id,
-            outcome: 'committed',
-            sha256: sha256File(dest),
-            target_path: dest,
-            at: new Date().toISOString(),
-          }, null, 2));
+          finalPath = commitToArchive(task, savePath, tag);
         } catch (moveErr) {
           console.log(`${tag} ⚠ 移动到归档目录失败，文件保留在 Downloads: ${moveErr.message.slice(0, 80)}`);
         }

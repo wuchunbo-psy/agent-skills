@@ -141,6 +141,21 @@ function writeDiagnostic(messages, error) {
  * 主入口。
  */
 export function main(runner) {
+  // --max-age-minutes N：快照在 N 分钟内则直接复用（跳过 API 分页，冷启动×N页的重复开销）。
+  // 默认 0 = 总是扫描（保持旧行为）。用户明确说"刚收到邮件"时勿带本参数。
+  const ageArg = process.argv.find(a => a.startsWith('--max-age-minutes'));
+  if (ageArg) {
+    const maxAgeMin = Number(ageArg.split('=')[1] || process.argv[process.argv.indexOf(ageArg) + 1]) || 0;
+    if (maxAgeMin > 0 && fs.existsSync(OUT)) {
+      const ageMs = Date.now() - fs.statSync(OUT).mtimeMs;
+      if (ageMs < maxAgeMin * 60_000) {
+        const cached = JSON.parse(fs.readFileSync(OUT, 'utf8'));
+        console.log(`⚡ 快照新鲜（${Math.round(ageMs / 60_000)} 分钟前），--max-age-minutes=${maxAgeMin} 内直接复用: ${OUT}（${cached.length} 封）`);
+        return;
+      }
+    }
+  }
+
   // 增量：读上次快照的 message_id 集合（不存在则全量穷尽，兼容首轮）
   let prevMessages = [];
   if (fs.existsSync(OUT)) {

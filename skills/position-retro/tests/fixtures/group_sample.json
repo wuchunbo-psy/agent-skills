@@ -1,0 +1,22 @@
+[
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-03 14:59", "content": "<file key=\"f1\" name=\"赵大_战斗客户端程序_5年.pdf\"/>"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-03 14:59", "content": "<file key=\"f2\" name=\"孙三_战斗客户端程序_6年.pdf\"/>"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-04 19:23", "content": "<file key=\"f3\" name=\"李四_游戏战斗客户端程序_7年.pdf\"/>"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-10 20:03", "content": "<file key=\"f4\" name=\"周吴_战斗客户端程序_4年.pdf\"/>"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-13 18:25", "content": "<file key=\"f5\" name=\"郑王_战斗客户端程序_8年.pdf\"/>"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-18 18:51", "content": "<file key=\"f6\" name=\"冯九_游戏战斗客户端程序_5年.pdf\"/>"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-04 19:27", "content": "<file key=\"f7\" name=\"钱二_系统客户端程序_4年.pdf\"/>"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-21 19:03", "content": "<file key=\"f8\" name=\"吴十_系统客户端程序_5年.pdf\"/>"},
+ {"sender": {"id": "ou_Z", "name": "钟某"}, "msg_type": "text", "create_time": "2026-08-20 10:00", "content": "赵大基础偏弱"},
+ {"sender": {"id": "ou_H", "name": "金某"}, "msg_type": "text", "create_time": "2026-08-21 11:00", "content": "孙三可以，麻烦安排面试"},
+ {"sender": {"id": "ou_Z", "name": "钟某"}, "msg_type": "text", "create_time": "2026-08-22 15:30", "content": "李四同步方案讲不清，不通过"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "text", "create_time": "2026-08-03 10:51", "content": "电脑端 ctrl+p 就可以直接打印"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "text", "create_time": "2026-08-05 17:49", "content": "行，那我往下推进面试"},
+ {"sender": {"id": "ou_Z", "name": "钟某"}, "msg_type": "text", "create_time": "2026-08-06 09:00", "content": "好的收到"},
+ {"sender": {"id": "ou_H", "name": "金某"}, "msg_type": "text", "create_time": "2026-08-11 14:00", "content": "这几个再看看"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "text", "create_time": "2026-08-12 14:15", "content": "作品二维码在简历中"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-14 20:00", "content": "<file key=\"f9\" name=\"赵大_战斗客户端程序_5年.pdf\"/>"},
+ {"sender": {"id": "ou_WU", "name": "吴某"}, "msg_type": "file", "create_time": "2026-08-15 09:00", "content": "<file key=\"f10\"/>"},
+ {"sender": {"id": "ou_Z", "name": "钟某"}, "msg_type": "file", "create_time": "2026-08-16 10:00", "content": "<file key=\"f11\" name=\"陈七_战斗客户端程序_9年.pdf\"/>"},
+ {"sender": {"id": "ou_H", "name": "金某"}, "msg_type": "file", "create_time": "2026-08-17 10:00", "content": "<file key=\"f12\" name=\"卫二_战斗客户端程序_6年.pdf\"/>"}
+]

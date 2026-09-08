@@ -187,7 +187,11 @@ function processMailDetail(m, detailOrErr, manifest, batchId, failed) {
           source_url: link.url,
           link_text: link.text,
           link_kind: link.kind,
-          original_filename: null,
+          // 链接旁的附件名+大小（QQ 大附件卡片「文件名 (大小MB, 日期)」）。
+          // 多附件邮件靠它区分——只有 subject 时「手绘低模.jpg ×2」分不清是两个不同附件；
+          // 大小供下载前的 Downloads 本地复用校验（用户已手动下载的不重复走浏览器）
+          original_filename: link.filename || null,
+          attach_size_mb: link.size_mb || null,
           candidate_name: null,
           job_name: null,
           target_dir: null,

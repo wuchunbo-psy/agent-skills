@@ -22,7 +22,7 @@ import {
   readManifest, writeManifestAtomic, transitionRecord, upsertRecord, transitionToExcluded,
 } from './lib/manifest.mjs';
 import { getArg, isDirectRun } from './lib/cli_helpers.mjs';
-import { mdd, recordDate, parseDateArg } from './lib/dates.mjs';
+import { mdd, recordDate, parseDateArg, archiveDateSegment } from './lib/dates.mjs';
 import { ARCHIVE_ROOT, MANIFEST as MANIFEST_DEFAULT } from './lib/paths.mjs';
 
 /**
@@ -224,8 +224,9 @@ export function resolveRecord(manifest, recordId, name, jobName, filename, jobDi
   if (!['needs_resolution', 'blocked'].includes(base.status)) {
     return { manifest, status: 'bad_record', detail: `记录状态 ${base.status} 不可解析（需 needs_resolution 或 blocked）` };
   }
-  // 日期段：显式 --date 覆盖 > 该记录邮件收到日（received_at，fallback 链见 dates.mjs）
-  const dateSeg = (opts && opts.date) ? dateSegment(opts.date) : mdd(recordDate(base));
+  // 日期段：显式 --date 覆盖 > 归档日规则推算（22点后算次日+周末算周一，2026-08-21 用户定稿；
+  // received_at 事实字段不动，规则只影响归组目录名）
+  const dateSeg = (opts && opts.date) ? dateSegment(opts.date) : archiveDateSegment(base);
 
   const dirs = jobDirs !== undefined ? jobDirs : discoverJobDirs();
   const { matched, ambiguous } = matchJobDir(jobName, dirs);
@@ -258,11 +259,15 @@ export function resolveRecord(manifest, recordId, name, jobName, filename, jobDi
   // 比对前统一取末级名（岗位目录末级 = 岗位名，跨团队同名岗视为同人重复，--new-version 可覆盖）。
   const normJob = (j) => String(j || '').split('/').pop();
   const allRecords = Object.values(manifest.records || {});
+  // 2026-08-25 林秋钰教训：同一封邮件的第二个附件（简历 PDF + 作品 zip）不是重复投递，
+  // 是同批补充材料——message_id 相同的 archived 记录不参与防重（放行后由下载层
+  // "目标存在绝不覆盖" + SHA 校验兜底）；跨邮件/跨天的同名同岗才是真重复投递。
   const dup = allRecords.some(r =>
     r.record_id !== recordId &&
     r.candidate_name === name &&
     normJob(r.job_name) === normJob(jobName) &&
-    ['archived', 'validated'].includes(r.status)
+    ['archived', 'validated'].includes(r.status) &&
+    String(r.message_id || '') !== String(base.message_id || '')
   );
   if (dup && !opts?.newVersion) {
     // 展开姓名/岗位再转终态：不丢 candidate_name（汇总和后续 --new-version 都要用）
@@ -356,9 +361,13 @@ export function deriveTargetFilename(filename, name, job) {
   // 从原文件名提取年限（如"13年""一年以内""应届"）
   const yearMatch = /(?:[_\-—])(\d+年|一年以内|应届|不限)(?:\.|$)/.exec(filename);
   const year = yearMatch ? yearMatch[1] : '';
+  // 原文件名带"作品集-/作品集"标记 → 保留为后缀（2026-08-20 刘小六事故：同人同日发
+  // 简历+作品集两封邮件，两份都派生成同名"姓名_岗位_年限.pdf"，下载层判"同日重复投递"
+  // 把作品集误杀。保留标记让两类材料天然不同名）
+  const isPortfolio = /作品集|portfolio/i.test(filename);
   const safeJob = job.replace(/[\\/:*?"<>|]/g, '').replace(/[\s]/g, '');
   const base = `${name}_${safeJob}`;
-  return `${base}${year ? '_' + year : ''}.${extMatch[1].toLowerCase()}`;
+  return `${base}${year ? '_' + year : ''}${isPortfolio ? '_作品集' : ''}.${extMatch[1].toLowerCase()}`;
 }
 
 /**
@@ -572,6 +581,24 @@ function main() {
   }
 
   const manifest = readManifest(manifestPath);
+  // 同人已归档警告（2026-08-20 孙国军教训）：手动 resolve 前必查同人记录——
+  // 同一邮件 collect auto 可能已归档（多链接/多 record 场景 duplicate 判定拦不住跨 record 同人），
+  // 盲目 resolve 会造重复记录+重建已收敛的 _暂定 目录。警告不阻断：同人重投走 --new-version。
+  if (!args.includes('--new-version')) {
+    const dupes = Object.values(manifest.records || {}).filter(r =>
+      r.candidate_name === name && r.status === 'archived');
+    if (dupes.length) {
+      const sameMail = dupes.some(d => String(d.message_id || '') === String((manifest.records[recordId] || {}).message_id || ''));
+      console.log(`⚠️ 注意：manifest 里已有 ${dupes.length} 条「${name}」的 archived 记录：`);
+      for (const d of dupes) {
+        console.log(`   - ${d.record_id.slice(7, 19)} → ${d.target_dir || '?'}（收到 ${d.received_at || '?'}）`);
+      }
+      if (sameMail) {
+        console.log(`   其中存在与本记录同 message_id 的归档（同封邮件的补充材料，防重已自动放行，无需处理）。`);
+      }
+      console.log(`   若本次是跨邮件同人重复件 → 改用 --exclude 排除或直接停；若是更新版简历 → 加 --new-version 重开归档。`);
+    }
+  }
   const result = resolveRecord(manifest, recordId, name, jobName, filename, undefined, { date, newVersion: args.includes('--new-version') });
   writeManifestAtomic(manifestPath, result.manifest);
 

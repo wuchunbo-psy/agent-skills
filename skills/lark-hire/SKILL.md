@@ -58,12 +58,14 @@ metadata:
 | 建投递 | `POST /open-apis/hire/v1/applications` | `hire_create_application()`（已处理 1002206） |
 | 查投递详情 | `GET /open-apis/hire/v1/applications/{application_id}` | `hire_get_application()` |
 | 列投递 | `GET /open-apis/hire/v1/applications`（支持 `job_id`/`talent_id`/`active_status`(1活跃/2非活跃/3全部)/`page_size≤200` 过滤；返回仅 id 数组，详情需逐条查） | `hire_list_applications()` |
+| 按人查全部投递（含已终止） | = 列投递(`talent_id`) + 逐条详情，返回 application dict 数组（含 `active_status`/`termination_reason_note` 终止原因原文，id 已回填 `application_id`） | `hire_find_application(talent_id)` |
 | 流转阶段 | `POST /open-apis/hire/v1/applications/{id}/transfer_stage` | `hire_transfer_stage()` |
 | 终止/淘汰 | `POST /open-apis/hire/v1/applications/{id}/terminate` | `hire_terminate()` |
 | 恢复已终止投递 | `POST /open-apis/hire/v1/applications/{id}/recover`（无 body；前置=已终止+未入职+未锁定其他投递） | `hire_recover_application()`（⚠️写操作，逐案经用户确认；保住历史面试记录，优于 terminate 后重建投递） |
 
 > transfer_stage / terminate 是唯一正确接口；`PUT /applications/{id}` 不存在会 404。
-> ⚠️ 分页陷阱（两套规则，别混）：**applications 实测 `page_size=200` 可用**（2026-08-14 验证），**jobs 列表 `page_size>20` 返回空**——两个接口行为不同。按岗拉投递（`job_id` 参数 + `active_status=1`）是省请求的正确姿势，全量拉投递会踩 2000+ 条活跃投递的坑。
+> ⚠️ 查人铁律（2026-09-08）：怀疑"某人不在活跃池/没录入"时，**先调 `hire_find_application(talent_id)`**（1 次调用给全部真相，含已终止投递和终止原因原文）；禁止手写"按岗位拉投递逐个 `hire_get_application` 比对 talent_id"的临时探针——`hire_get_application` 返回的**已是解包后的 application 对象**，再 `.get('data')` 取值恒为 None（当天该写法把"已录入但 9-03 已被业务终止（岗位不匹配）"误判成"未录入"，白跑 26 次请求）。注意 `talent_id` 过滤**默认含已终止投递**（不带 `active_status` 参数时活跃+非活跃都返回），与表格里 `active_status` 过滤语义不同。
+> ⚠️ 分页陷阱（两套规则，别混）：**applications 实测 `page_size=200` 可用**（2026-08-14 验证；`hire_list_applications` 已按 200 翻页），**jobs 列表 `page_size>20` 返回空**——两个接口行为不同。按岗拉投递（`job_id` 参数 + `active_status=1`）是省请求的正确姿势，全量拉投递会踩 2000+ 条活跃投递的坑。
 
 ### Job（岗位）
 
@@ -83,6 +85,8 @@ metadata:
 | 面试官任务（**谁欠面评**） | `GET /open-apis/hire/v1/interview_tasks?user_id=<面试官open_id>&activity_status=2`（1未开始/2未评价/3已评价/5已终止；scope=`hire:interview:readonly`） | `hire_list_interview_tasks()` |
 
 > 面试官枚举：官方 `GET /interviewers` 列表**没用**（只返回执行过"更新面试官信息"的用户，实测 0 条）。用 `notes/interviewers.json` 缓存 ∪ 面试记录 `interview_record_list[].interviewer.id` 反查（interviews 默认 `user_id_type=open_id`，两者同型可直接并集）。
+>
+> **创建面试 API：截至 2026-08-27 未开放（08-26 与 08-27 两日均复测路由级 404）（⚠️ 带日期的快照，会过期，用前复测）**：当日复测文档页 `hire-v1/interview/create` 返回 404，实测 `POST /hire/v1/interviews`、`POST /applications/{id}/interviews` 路由均 "404 page not found"。判别方法：路由存在但缺权限时会返回权限错误码 + scope 名，与 404 可区分——**隔了较久要建面试时，花一个请求照此复测即可，别把本条当永久结论**。官方《智能招聘解决方案》给集成方的替代路径是**日历域**：查忙闲(freebusy) → 日历创建日程 → 加参与者与会议室（代价：ATS 内不产生面试记录）；若 API 已开放则直接走 Hire 接口为最优。
 
 ### 招聘任务/评估（2026-08-18 hire:evaluation:readonly 开通）
 
@@ -107,7 +111,10 @@ metadata:
 | 操作 | 接口 | 封装函数 |
 |---|---|---|
 | 上传附件（带文件名） | `POST /open-apis/hire/v1/attachments` | `_lark_shared.upload_attachment_with_name()` |
+| 查附件信息（含下载链接） | `GET /open-apis/hire/v1/attachments/{attachment_id}`（`type`: 1简历/2作品/3通用，默认1） | —（`hire_api("GET", ...)` 直调，2026-09-08 实测） |
 
+> **下载**：返回 `data.attachment.url` 为下载地址，**有效期 30 分钟**，requests 直拉即可（print_resume.py ATS 兜底链在用）。
+> **`mime` 字段不可靠**：实测 `.doc` 被标成 `application/vnd.ms-powerpoint`，判真实格式看文件头（`%PDF`=PDF / `D0CF11E0`=老版doc·ppt / `PK\x03\x04`=OOXML）。
 > **唯一保留 Python requests 直连的接口**：lark-cli `--file` 传不了 `file_name` 表单字段，必须用 multipart 直传。封装函数内部用 `APP_SECRET` 换 token。
 
 ### 简历解析

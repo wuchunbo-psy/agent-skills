@@ -181,6 +181,30 @@ def extract_resume_text(filepath):
     return "", False, f"不支持的格式: {ext}", None
 
 
+def reuse_previous_transcription(json_path, text, is_valid, render):
+    """已有视觉转录则复用，不重复渲染、不覆盖（2026-09-03 固化进脚本，不靠记忆）。
+
+    BOSS 加密/扫描型 PDF 的既定流程：脚本渲染图片 → 主会话视觉读 → 人工写回
+    JSON 的 text 字段。重跑时脚本不知道 text 已是人工转录产物，会重新渲染并
+    把转录覆盖掉（2026-09-02 曾华强案例：归档 peek 已转录，提取又渲染一遍）。
+
+    规则：本次提取不可读（text 层仍乱码/为空）而现有 JSON 里有非空 text 时，
+    判定其为人工转录 → 复用并打 text_source=vision 标记；本次可读则以本次为准。
+    返回 (text, is_valid, render, reused)。
+    """
+    if is_valid and text.strip():
+        return text, is_valid, render, False
+    try:
+        with open(json_path, "r", encoding="utf-8") as jf:
+            prev = json.load(jf)
+    except Exception:
+        return text, is_valid, render, False
+    prev_text = (prev.get("text") or "").strip()
+    if prev_text:
+        return prev_text, True, None, True
+    return text, is_valid, render, False
+
+
 def parse_name_from_dir(date_dir):
     """从日期目录路径解析出 岗位路径（相对于 archive-root）。"""
     # date_dir = .../已收集简历/8.5_3份 或 .../已收集简历/8.5_3份/强推
@@ -200,25 +224,13 @@ def parse_name_from_dir(date_dir):
     return studio, job_name
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="扫描日期目录，自动发现+提取所有简历文本（含 zip/rar 包内简历）"
-    )
-    parser.add_argument("--date", required=True, help="日期前缀，如 8.05")
-    parser.add_argument("--archive-root", default=ARCHIVE_ROOT_DEFAULT, help="归档根目录")
-    parser.add_argument("--output-dir", default=None, help="文本 JSON 输出目录（默认 notes/_extract_{date}）")
-    args = parser.parse_args()
+def _run_date(args, date_prefix, output_dir):
+    """处理单个日期段：扫描→解压→提取→清单。
 
-    date_prefix = args.date
-    # 兼容 8.05 和 8.5 两种写法（归档目录用 M.D 不补零，如 8.5_3份）
-    # find_date_dirs 用 startswith，传入的 prefix 要和目录名一致
-    # 目录名格式：{M.DD}_N份，如 8.5_3份、7.29_1份（月不补零、日补零到2位）
-    # 但 8.05 这种用户输入也要支持 → 规范化为 M.D 格式
-    if "." in date_prefix:
-        month, day = date_prefix.split(".", 1)
-        date_prefix = f"{int(month)}.{int(day)}"  # 去前导零：8.05 → 8.5
+    多日期经 main 循环调用本函数——OCR/渲染模型在进程内只初始化一次，
+    这是 2026-08-25 提速改造的核心（此前每日期一次进程，easyocr 重复加载 30-60s/次）。
+    """
     archive_root = args.archive_root
-    output_dir = args.output_dir or f"{os.environ.get('PROJECT_ROOT', os.getcwd())}/notes/_extract_{date_prefix.replace('.', '.')}"
     os.makedirs(output_dir, exist_ok=True)
 
     # 1. 扫描日期目录
@@ -251,8 +263,12 @@ def main():
                     # 独立简历文件
                     if is_resume_file(f):
                         text, is_valid, issue, render = extract_resume_text(filepath)
+                        json_path = os.path.join(output_dir, f"{name_base}.json")
+                        text, is_valid, render, reused = reuse_previous_transcription(json_path, text, is_valid, render)
                         # BOSS 加密文本层：渲染了图片，status 标注提示用视觉识别
-                        status = "✅已提取" if is_valid else ("🖼️BOSS加密(已渲染图片)" if render else "⚪图片型/异常")
+                        status = ("✅已提取(复用视觉转录)" if reused
+                                  else "✅已提取" if is_valid
+                                  else ("🖼️BOSS加密(已渲染图片)" if render else "⚪图片型/异常"))
                         key = f"{name_base}_{job}"
                         if key not in candidates:
                             candidates[key] = {
@@ -263,9 +279,10 @@ def main():
                                 "render_pages": render,
                             }
                             # 保存 JSON
-                            json_path = os.path.join(output_dir, f"{name_base}.json")
                             with open(json_path, "w", encoding="utf-8") as jf:
                                 out = {"text": text, "is_valid": is_valid, "issue": issue}
+                                if reused:
+                                    out["text_source"] = "vision"
                                 if render:
                                     out["render_pages"] = render
                                     out["render_fallback"] = True
@@ -283,7 +300,11 @@ def main():
                             resumes.sort(key=lambda x: 0 if x[0] == "resume" else 1)
                             resume_type, resume_path, resume_name = resumes[0]
                             text, is_valid, issue, render = extract_resume_text(resume_path)
-                            status = "✅已提取(zip内)" if is_valid else ("🖼️BOSS加密(zip内,已渲染图片)" if render else "⚪图片型/异常(zip内)")
+                            json_path = os.path.join(output_dir, f"{name_base}.json")
+                            text, is_valid, render, reused = reuse_previous_transcription(json_path, text, is_valid, render)
+                            status = ("✅已提取(zip内,复用视觉转录)" if reused
+                                      else "✅已提取(zip内)" if is_valid
+                                      else ("🖼️BOSS加密(zip内,已渲染图片)" if render else "⚪图片型/异常(zip内)"))
                             key = f"{name_base}_{job}"
                             if key not in candidates:
                                 candidates[key] = {
@@ -294,9 +315,10 @@ def main():
                                     "text": text if is_valid else "",
                                     "render_pages": render,
                                 }
-                                json_path = os.path.join(output_dir, f"{name_base}.json")
                                 with open(json_path, "w", encoding="utf-8") as jf:
                                     out = {"text": text, "is_valid": is_valid, "issue": issue}
+                                    if reused:
+                                        out["text_source"] = "vision"
                                     if render:
                                         out["render_pages"] = render
                                         out["render_fallback"] = True
@@ -354,6 +376,28 @@ def main():
         for r in render_candidates:
             pages = r.get("render_pages", [])
             print(f"  → {r['name']}（{r['job']}）: 渲染前 {len(pages)} 页（作品集超长页截断，核心信息在前几页）→ {output_dir}/{r['name']}.json 的 render_pages 字段")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="扫描日期目录，自动发现+提取所有简历文本（含 zip/rar 包内简历）"
+    )
+    parser.add_argument("--date", required=True, action="append",
+                        help="日期前缀，可重复传多天一次跑（OCR/渲染模型只加载一次）：--date 8.24 --date 8.25")
+    parser.add_argument("--archive-root", default=ARCHIVE_ROOT_DEFAULT, help="归档根目录")
+    parser.add_argument("--output-dir", default=None, help="文本 JSON 输出目录（默认按日期各自 notes/_extract_{date}，不建议多日期共用）")
+    args = parser.parse_args()
+
+    for raw in args.date:
+        date_prefix = raw
+        # 兼容 8.05 和 8.5 两种写法（归档目录用 M.D 不补零）→ 规范化为 M.D
+        if "." in date_prefix:
+            month, day = date_prefix.split(".", 1)
+            date_prefix = f"{int(month)}.{int(day)}"
+        output_dir = args.output_dir or f"{os.environ.get('PROJECT_ROOT', os.getcwd())}/notes/_extract_{date_prefix}"
+        if len(args.date) > 1:
+            print(f"\n━━━ 日期段 {date_prefix} ━━━")
+        _run_date(args, date_prefix, output_dir)
 
 
 if __name__ == "__main__":

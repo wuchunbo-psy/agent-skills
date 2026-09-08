@@ -65,10 +65,11 @@ async function main() {
   const backlog = args.includes('--backlog');
   const finish = !args.includes('--no-finish');
   const date = getArg(args, '--date');
+  const maxAge = getArg(args, '--max-age-minutes');   // 透传 scan_all：N 分钟内快照直接复用，跳过邮件分页
   const humanNotes = [];
 
   // ---- 阶段1-2：扫描 + 增量核查 ----
-  if (runNode('scan_all.mjs', []) !== 0) { console.error('\n🔴 阶段1 扫描失败，中止'); process.exit(1); }
+  if (runNode('scan_all.mjs', maxAge ? ['--max-age-minutes', maxAge] : []) !== 0) { console.error('\n🔴 阶段1 扫描失败，中止'); process.exit(1); }
   // verify 退出码 2 = 有邮件需人工确认（blocked 已入 manifest），流程继续，汇总里呈现
   const verifyCode = runNode('verify_mails.mjs', ['--manifest', manifestPath]);
   if (verifyCode === 1) { console.error('\n🔴 阶段2 核查异常，中止'); process.exit(1); }
@@ -153,7 +154,11 @@ async function main() {
   const blocked = finalRecs.filter(r => r.status === 'blocked');
   const verifiedPending = finalRecs.filter(r => r.status === 'verified');
   const label = (r) => {
-    const name = r.subject || r.original_filename || r.source_url || r.record_id;
+    // 链接类优先显示链接旁的附件名：一封邮件多个大附件时 subject（如「手绘低模.jpg」）
+    // 无法区分是哪条链接，08-20 曾因此把两个不同附件误判为重复整封排除
+    const name = (r.source_type === 'link' && r.original_filename)
+      ? r.original_filename
+      : (r.subject || r.original_filename || r.source_url || r.record_id);
     return `${name}${r.job_name ? `（${r.job_name}）` : ''}${r.received_at ? ` [${String(r.received_at).slice(5, 16)}]` : ''}`;
   };
   const isRecent = (r) => {
