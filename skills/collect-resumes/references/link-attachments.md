@@ -35,6 +35,37 @@ node "…/scripts/batch_download_links.mjs" --urls "https://wx.mail.qq.com/..." 
 - 快速失败：download 事件等 15 秒（需登录的页面按钮无效→跳过），传输超时 5 分钟
 - 依赖 `playwright` npm 包（装在 `<PROJECT_ROOT>/node_modules`，脚本自动 fallback 加载）
 
+### ⚠️ 163 超大附件（mail.163.com/large-attachment）：batch_download_links 必失败，走长等待脚本
+
+2026-09-08 高阳 66.6MB 实测：163「普通下载」点击后有**等待倒计时，40s+ 才触发 download 事件**，batch_download_links 固定等 15s → headless/有头都必 timeout。链接本身 HTTP 200 未失效（页面显示文件名/大小/剩余有效期，无需登录）。
+
+诊断方法（先查实再动手）：临时 playwright 脚本 `goto → wait 6s → body.innerText`——能看到「高阳简历+作品.rar / 66.6MB / N天后到期 / 普通下载 / 极速下载」就是有效，直接进下一步。
+
+下载脚本（一次性，用完删；核心是 `waitForEvent('download', {timeout:180000})` 而不是轮询）：
+
+```js
+const { chromium } = require('playwright');
+(async () => {
+  const url = process.argv[2];
+  const browser = await chromium.launch({ headless: true }); // 无需有头，无需登录
+  const page = await (await browser.newContext({ acceptDownloads: true })).newPage();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.waitForTimeout(6000);
+    await page.locator('text=普通下载').first().click({ timeout: 10000 });
+    const download = await page.waitForEvent('download', { timeout: 180000 }); // 163 倒计时长，15s 必超
+    const dest = 'Downloads 目录/' + download.suggestedFilename();
+    await download.saveAs(dest);
+    console.log('DOWNLOAD_OK', dest);
+  } catch (e) { console.log('ERR', e.message); } finally { await browser.close(); }
+})();
+// 跑法: NODE_PATH=<PROJECT_ROOT>/node_modules node 脚本.js "<url>"
+```
+
+实测 3m16s 下完 66.6MB。下完走「用户手动下载归档」三步走（mv → 写 `notes/_download_results/sha256_<record_id 去:>.result.json` → merge_results）。
+
+⚠️ 坑：第一版脚本用「轮询 40s + finally close」会把晚触发的 download 掐成 `saveAs: canceled`——必须用 waitForEvent 阻塞等，不能轮询后关浏览器。
+
 ### Fallback：Playwright MCP 手动操作
 
 脚本失败时（如页面改版按钮失效），用 MCP 逐个打开链接点下载：

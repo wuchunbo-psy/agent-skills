@@ -532,7 +532,10 @@ def get_freebusy_blocks(oids, start_iso, end_iso, labels=None, lunch=(datetime.t
         if items is None:
             items = []
         if isinstance(items, dict):
-            items = items.get("items", []) or items.get("freebusy_list", [])
+            # lark-cli 1.0.94（2026-09-09 自动更新实测）起 +freebusy 输出改为
+            # data.users[].busy[]；旧结构 data.items[]/freebusy_list[] 保留在前兼容降级
+            items = (items.get("items", []) or items.get("freebusy_list", [])
+                     or [b for u in (items.get("users") or []) for b in (u.get("busy") or [])])
         # 区分"面试官真没会" vs "API 失败返空（token 过期/open_id 失效）"
         if not data.get("ok", True) and not items:
             print(f"  [⚠️ 空结果可能异常] {label}({oid[:12]}...) freebusy 返回空且 ok=false——"
@@ -612,13 +615,16 @@ def _hint_hits_lunch(hint, lunch_s, lunch_e):
     return (lunch_s.hour * 60 + lunch_s.minute) <= minutes < (lunch_e.hour * 60 + lunch_e.minute)
 
 
-def intersect(candidate_date, time_hint, blocks, duration_min, work_start=9, work_end=18, now=None):
+def intersect(candidate_date, time_hint, blocks, duration_min, work_start=9, work_end=18, now=None, min_lead=120):
     """
     把候选人的候选日（+可选时段偏好）和空闲块求交，输出可约的具体时刻列表。
     返回 [{"time": "HH:MM", "label": "..."}, ...]
 
     now: 当前时间（含时区）。当 candidate_date == now.date()（即今天）时，
     会把已经过去的时段剔除，避免把"今天上午11点"这种过期时点排成面试建议。
+    min_lead: 当天档位距 now 的最小提前量（分钟，默认 120）。剔除线 = now+min_lead
+    之后的下一个 30 分钟边界——草稿链路是转发→面试官确认→敲定→手建，临期档
+    （如距开场 18 分钟的 11:00）静态上是黄金档但链路走不完，视同已过（2026-09-10 定稿）。
     """
     avail_slots = []
     for bs, be in blocks:
@@ -637,9 +643,10 @@ def intersect(candidate_date, time_hint, blocks, duration_min, work_start=9, wor
         slot_start = max(bs, win_start)
         slot_end = min(be, win_end)
         # 2026-08-19 修：今天已过的时段直接剔除。
-        # 对齐到下一个 30 分钟边界，避免建议"现在4分钟后"这种非整点时点。
+        # 2026-09-10 修：剔除线从 now 推到 now+min_lead（当天临期档确认链走不完，视同已过）。
+        # 对齐到剔除线后下一个 30 分钟边界，避免建议"现在4分钟后"这种非整点时点。
         if now is not None and candidate_date == now.date():
-            floor_min = ((now.hour * 60 + now.minute) // 30 + 1) * 30
+            floor_min = ((now.hour * 60 + now.minute + max(0, min_lead)) // 30 + 1) * 30
             if floor_min >= 24 * 60:
                 # 今天已无剩余 30 分钟边界（接近午夜），整段跳过
                 continue
@@ -658,8 +665,9 @@ def intersect(candidate_date, time_hint, blocks, duration_min, work_start=9, wor
         if time_hint and ":" in time_hint and "-" not in time_hint:
             th, tm = map(int, time_hint.split(":"))
             target = datetime.datetime(day.year, day.month, day.day, th, tm, tzinfo=TZ)
-            # 今天给的精确时刻若已过期，不纳入候选
-            expired = now is not None and candidate_date == now.date() and target < now
+            # 今天给的精确时刻若早于剔除线（now+min_lead 后的 30 分钟边界），不纳入候选——
+            # 候选人点名的临期时刻同样要过确认链，与网格档统一口径（2026-09-10）
+            expired = now is not None and candidate_date == now.date() and target < floor
             if not expired and slot_start <= target and target + datetime.timedelta(minutes=duration_min) <= slot_end:
                 ts = target.strftime("%H:%M")
                 if ts not in avail_slots:
@@ -708,11 +716,15 @@ def _has_conflict(date, time_str, duration_min, occupied):
 
 def _slot_priority(time_str):
     """面试时间优先级评分（越小越优先）。面试黄金时段锚点：11:00、15:00-17:00。
-    09:00 过早、午休前后、下班线后都靠后。"""
+    10:30 前过早、午休前后、下班线后都靠后。"""
     h, m = int(time_str[:2]), int(time_str[3:5])
     minutes = h * 60 + m
     # 偏好锚点：11:00(660)、15:00(900)、16:00(960)、17:00(1020) 取最近距离
     anchors = [660, 900, 960, 1020]
+    # 上午 10:30 前过早罚分（2026-09-09 用户定稿：一般最早 10:30/11:00 起，除非特殊情况；
+    # 罚分须大于日内最大锚点距离，保证窗口里存在 ≥10:30 的档时早档永远轮不上）
+    if minutes < 630:
+        return min(abs(minutes - a) for a in anchors) + 240
     return min(abs(minutes - a) for a in anchors)
 
 
@@ -1253,6 +1265,7 @@ def main():
     ap.add_argument("--work-start", default="9", help="工作开始小时，默认 9")
     ap.add_argument("--work-end", default="20", help="工作结束小时，默认 20（2026-09-02 用户定稿：最晚约到 20:00）")
     ap.add_argument("--lunch", default="12-14", help="午休时段 HH-HH（支持 .5 半点，如 12-13.5），默认 12-14（2026-09-01 用户定稿：公司午休 12:00-14:00；候选人点名午间时刻时该候选人自动放行午间档）")
+    ap.add_argument("--min-lead", type=int, default=120, help="当天档位距 now 的最小提前量（分钟），默认 120——转发→面试官确认→敲定→手建链所需时长，当天临期档视同已过（2026-09-10 用户定稿；0=关闭，回到只剔已过时段）")
     ap.add_argument("--dry-run", action="store_true", help="只解析不查飞书")
     args = ap.parse_args()
     # 归一化：'现场' → '线下'（2026-08-04 用户定稿：'线下面试'更贴切，'现场'保留仅为兼容旧用法）
@@ -1417,7 +1430,7 @@ def main():
             # 候选人点名午间时刻（12/13 点）→ 用不扣午休的空闲块，按候选人时间放行（2026-09-02 定稿）
             hint_d = c["day_hints"].get(d)
             use_blocks = blocks_raw if _hint_hits_lunch(hint_d, lunch_s, lunch_e) else blocks
-            slots = intersect(d, hint_d, use_blocks, args.duration, work_start, work_end, now)
+            slots = intersect(d, hint_d, use_blocks, args.duration, work_start, work_end, now, args.min_lead)
             # 排除已被其他候选人占用的时段（按 30 分钟对齐，duration 内不能重叠）
             avail = [s for s in slots if not _has_conflict(d, s, args.duration, occupied)]
             if avail:
@@ -1558,7 +1571,7 @@ def main():
     out.append("【候选人匹配】（空闲 ∩ 候选人日期，黄金时段优先）")
     out.extend(lines_result)
     out.append("")
-    out.append(f"  选择规则：11:00、15:00-18:00 黄金时段优先；避开 09:00 过早 / {lunch_s.strftime('%H:%M')}-{lunch_e.strftime('%H:%M')} 午休（候选人点名午间时刻的按其时间放行）/ {min(work_end, _DAY_END_HR):02d}:00+ 偏晚；同一面试官多候选人自动防撞档。")
+    out.append(f"  选择规则：11:00、15:00-18:00 黄金时段优先；避开 10:30 前过早 / 当天距 now 不足 {args.min_lead} 分钟的临期档（确认链走不完，视同已过）/ {lunch_s.strftime('%H:%M')}-{lunch_e.strftime('%H:%M')} 午休（候选人点名午间时刻的按其时间放行）/ {min(work_end, _DAY_END_HR):02d}:00+ 偏晚；同一面试官多候选人自动防撞档。")
     out.append("")
 
     # —— emoji 色块图示（纯文本，2026-08-07 起：对话内图示化主载体，贴在草稿前；不依赖渲染器）

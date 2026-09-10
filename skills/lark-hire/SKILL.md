@@ -86,7 +86,7 @@ metadata:
 
 > 面试官枚举：官方 `GET /interviewers` 列表**没用**（只返回执行过"更新面试官信息"的用户，实测 0 条）。用 `notes/interviewers.json` 缓存 ∪ 面试记录 `interview_record_list[].interviewer.id` 反查（interviews 默认 `user_id_type=open_id`，两者同型可直接并集）。
 >
-> **创建面试 API：截至 2026-08-27 未开放（08-26 与 08-27 两日均复测路由级 404）（⚠️ 带日期的快照，会过期，用前复测）**：当日复测文档页 `hire-v1/interview/create` 返回 404，实测 `POST /hire/v1/interviews`、`POST /applications/{id}/interviews` 路由均 "404 page not found"。判别方法：路由存在但缺权限时会返回权限错误码 + scope 名，与 404 可区分——**隔了较久要建面试时，花一个请求照此复测即可，别把本条当永久结论**。官方《智能招聘解决方案》给集成方的替代路径是**日历域**：查忙闲(freebusy) → 日历创建日程 → 加参与者与会议室（代价：ATS 内不产生面试记录）；若 API 已开放则直接走 Hire 接口为最优。
+> **创建面试 API：截至 2026-09-09 未开放（08-26/08-27/09-09 三次复测均为路由级 404，文档页 `hire-v1/interview/create` 同样 404；09-09 复测时 lark-cli 已升 1.0.94，排除 CLI 版本因素）（⚠️ 带日期的快照，会过期，用前复测）**：实测 `POST /hire/v1/interviews`、`POST /applications/{id}/interviews` 路由均 "404 page not found"。判别方法：路由存在但缺权限时会返回权限错误码 + scope 名，与 404 可区分——**隔了较久要建面试时，花一个请求照此复测即可，别把本条当永久结论**。官方《智能招聘解决方案》给集成方的替代路径是**日历域**：查忙闲(freebusy) → 日历创建日程 → 加参与者与会议室（代价：ATS 内不产生面试记录）；若 API 已开放则直接走 Hire 接口为最优。
 
 ### 招聘任务/评估（2026-08-18 hire:evaluation:readonly 开通）
 
