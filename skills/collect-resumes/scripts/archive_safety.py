@@ -35,7 +35,8 @@ MAX_COMPRESSION_RATIO = 100    # 压缩比上限（解压大小/压缩大小）
 # .doc 加在此处（2026-07-29：老式 .doc 经 antiword 可提取，纳入校验）
 ALLOWED_MEMBER_EXTS = {".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".gif", ".bmp"}
 # 作品素材扩展名（允许存在于 ZIP 内，但不做姓名/薪酬提取——视频无法 OCR）
-PORTFOLIO_MEDIA_EXTS = {".mp4", ".mov", ".avi", ".mpg", ".webm", ".wmv", ".psd", ".ai", ".riff", ".ase", ".ppt", ".pptx", ".md", ".svg", ".tiff", ".xml", ".txt", ".rels", ".spine", ".skel", ".json", ".atlas"}
+# .tga 加在此处（2026-09-16：乔煜琦特效包内 .tga 纹理图被误阻断；特效岗常用导出格式，性质同 png）
+PORTFOLIO_MEDIA_EXTS = {".mp4", ".mov", ".avi", ".mpg", ".webm", ".wmv", ".psd", ".ai", ".riff", ".ase", ".ppt", ".pptx", ".md", ".svg", ".tiff", ".tif", ".tga", ".xml", ".txt", ".rels", ".spine", ".skel", ".json", ".atlas"}
 # 简历扩展名（需要做姓名/薪酬提取）
 # .doc 是老式二进制 Word 格式（python-docx 不支持，走 antiword 提取）
 # 2026-07-29：从 PORTFOLIO_MEDIA_EXTS 移到此处，使 .doc 在 zip 内也参与姓名/薪酬校验
@@ -181,7 +182,13 @@ def check_zip(zip_path):
             zf.close()
             return SafetyResult(blocked=True, reason=f"成员格式 {ext} 不在允许列表: {name}")
 
-        safe_members.append({"name": name, "size": info.file_size, "ext": ext, "is_resume": ext in RESUME_MEMBER_EXTS})
+        # is_resume：PDF/DOC/DOCX 恒认；图片（jpg/jpeg/png）文件名含「简历/resume」也认
+        # （2026-09-20 毛亚雄案例：图片简历常叫「简历.jpg」，与 verify_archive._is_resume_file
+        # 对齐，避免"纯作品包"误报与包内简历成员漏提取）
+        is_resume = ext in RESUME_MEMBER_EXTS or (
+            ext in {".jpg", ".jpeg", ".png"} and ("简历" in name or "resume" in name.lower())
+        )
+        safe_members.append({"name": name, "size": info.file_size, "ext": ext, "is_resume": is_resume})
 
     zf.close()
 

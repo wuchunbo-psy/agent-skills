@@ -55,7 +55,7 @@ metadata:
 
 | 操作 | 接口 | 封装函数 |
 |---|---|---|
-| 建投递 | `POST /open-apis/hire/v1/applications` | `hire_create_application()`（已处理 1002206） |
+| 建投递 | `POST /open-apis/hire/v1/applications`（body 另支持 `application_preferred_city_code_list` 意向城市，未启用——2026-10-08 用户拍板不管） | `hire_create_application()`（已处理 1002206；默认带 `resume_source_id=18` BOSS直聘 + `user_id`=吴春波投递创建人 + `delivery_type=1`「HR 寻访」，均 2026-10-08 用户拍板——UI「候选人投递所有者」行=`creator_id`（徐梦甜手建件实证：ou_3b8291bb=徐梦甜；API 件此前 creator_id 全空=「投递者不是我」根源）；delivery_type 枚举据手建件反推 n=1；字段被拒收自动去掉重试保主链路、msg 标注降级；投递建后无 API 改来源/创建人，历史件只能 ATS 界面铅笔手改） |
 | 查投递详情 | `GET /open-apis/hire/v1/applications/{application_id}` | `hire_get_application()` |
 | 列投递 | `GET /open-apis/hire/v1/applications`（支持 `job_id`/`talent_id`/`active_status`(1活跃/2非活跃/3全部)/`page_size≤200` 过滤；返回仅 id 数组，详情需逐条查） | `hire_list_applications()` |
 | 按人查全部投递（含已终止） | = 列投递(`talent_id`) + 逐条详情，返回 application dict 数组（含 `active_status`/`termination_reason_note` 终止原因原文，id 已回填 `application_id`） | `hire_find_application(talent_id)` |
@@ -86,7 +86,7 @@ metadata:
 
 > 面试官枚举：官方 `GET /interviewers` 列表**没用**（只返回执行过"更新面试官信息"的用户，实测 0 条）。用 `notes/interviewers.json` 缓存 ∪ 面试记录 `interview_record_list[].interviewer.id` 反查（interviews 默认 `user_id_type=open_id`，两者同型可直接并集）。
 >
-> **创建面试 API：截至 2026-09-09 未开放（08-26/08-27/09-09 三次复测均为路由级 404，文档页 `hire-v1/interview/create` 同样 404；09-09 复测时 lark-cli 已升 1.0.94，排除 CLI 版本因素）（⚠️ 带日期的快照，会过期，用前复测）**：实测 `POST /hire/v1/interviews`、`POST /applications/{id}/interviews` 路由均 "404 page not found"。判别方法：路由存在但缺权限时会返回权限错误码 + scope 名，与 404 可区分——**隔了较久要建面试时，花一个请求照此复测即可，别把本条当永久结论**。官方《智能招聘解决方案》给集成方的替代路径是**日历域**：查忙闲(freebusy) → 日历创建日程 → 加参与者与会议室（代价：ATS 内不产生面试记录）；若 API 已开放则直接走 Hire 接口为最优。
+> **创建面试 API：✅ 已打通（2026-09-18 租户灰度开通「【OpenAPI】创建面试」）**：真实路由 `POST /open-apis/hire/v1/interview-arrangements`（**连字符**——此前六次 404 全因探的是下划线/复数变体，空 body 实测 `99992402 field validation` 列出必填字段 = 路由通+权限过；scope=`hire:interview` 更新面试信息，应用早已开通，无需申请）。文档标注「仅部分企业可见」，公开 llms 索引/官方 SDK 均无此接口，须灰度租户登录账号在文档站侧边栏查看（路径 `hire-v1/interview_arrangement/create`）。**完整 body 契约与配套通知模板接口见 references/hire-endpoints.md「创建面试安排」节（2026-09-18 逐字段核出）**；同族 cancel/patch/get 路径未探。⚠️ 真实创建即发通知（面试官日历邀请强制、候选人邮件默认可关），AI 不得未经用户确认对真实投递调用。
 
 ### 招聘任务/评估（2026-08-18 hire:evaluation:readonly 开通）
 

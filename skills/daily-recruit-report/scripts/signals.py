@@ -12,7 +12,7 @@ talent_id 由本脚本从 _daily_review.json 的 structured.ats 按 name 自动�
     python signals.py --read                             # 读当前 signals + decisions
     python signals.py --clear                            # 清空 signals + decisions（重跑判读时用）
 
---set 输入文件格式（JSON 数组，每条不含 talent_id，脚本自动补）：
+--set 输入文件格式（JSON 数组，也接受 {"signals": [...]} 包装；每条不含 talent_id，脚本自动补）：
     [
       {"name": "候选人U", "type": "invite", "source": "项目B工作室美术岗招聘沟通群",
        "evidence": "「2026-08-05 11:20 面试官F」@吴春波 这个聊聊哈",
@@ -75,14 +75,16 @@ def _save(state):
 
 
 def cmd_set(args):
-    """写入 signals：读输入 JSON 数组，自动补 talent_id + 校验，覆盖 signals 部分（保留 decisions）。"""
+    """写入 signals：读输入 JSON 数组（或 {"signals": [...]} 包装），自动补 talent_id + 校验，覆盖 signals 部分（保留 decisions）。"""
     if not os.path.exists(args.path):
         print(f"❌ 输入文件不存在: {args.path}")
         return 1
     with open(args.path, encoding="utf-8") as f:
         raw = json.load(f)
+    if isinstance(raw, dict) and isinstance(raw.get("signals"), list):
+        raw = raw["signals"]  # 兼容 {"signals": [...]} 包装
     if not isinstance(raw, list):
-        print("❌ 输入必须是 JSON 数组")
+        print("❌ 输入必须是 JSON 数组（或 {\"signals\": [...]} 包装对象）")
         return 1
 
     name_to_tid = _load_name_to_tid()
@@ -135,14 +137,16 @@ def cmd_set(args):
 
 
 def cmd_decide(args):
-    """写入 decisions：读输入 JSON 数组，校验枚举，追加（不去重）。"""
+    """写入 decisions：读输入 JSON 数组（或 {"decisions": [...]} 包装），校验枚举，覆盖写入。"""
     if not os.path.exists(args.path2):
         print(f"❌ 输入文件不存在: {args.path2}")
         return 1
     with open(args.path2, encoding="utf-8") as f:
         raw = json.load(f)
+    if isinstance(raw, dict) and isinstance(raw.get("decisions"), list):
+        raw = raw["decisions"]  # 兼容 {"decisions": [...]} 包装
     if not isinstance(raw, list):
-        print("❌ 输入必须是 JSON 数组")
+        print("❌ 输入必须是 JSON 数组（或 {\"decisions\": [...]} 包装对象）")
         return 1
 
     name_to_tid = _load_name_to_tid()
@@ -195,7 +199,7 @@ def cmd_clear():
 def main():
     p = argparse.ArgumentParser(description="信号与决策落盘工具")
     g = p.add_mutually_exclusive_group(required=True)
-    g.add_argument("--set", metavar="FILE", dest="path", help="写 signals（自动补 talent_id）")
+    g.add_argument("--set", metavar="FILE", dest="path", help="写 signals（输入 JSON 数组或 {\"signals\": [...]} 包装）")
     g.add_argument("--decide", metavar="FILE", dest="path2", help="写 decisions")
     g.add_argument("--read", action="store_true", help="读当前 signals + decisions")
     g.add_argument("--clear", action="store_true", help="清空 signals + decisions")

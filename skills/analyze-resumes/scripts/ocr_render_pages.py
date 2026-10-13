@@ -3,9 +3,9 @@
 用法:
   python ocr_render_pages.py <extract_dir 或 单个json> [--tessdata <TESSDATA_DIR>]
 
-对目录下每个含 render_pages 的 JSON：tesseract(chi_sim) 逐页识别 → 拼接写回 text 字段，
-标 ocr_draft=true。定位：兜底区升级为"有底稿的待定"——够支撑方向/硬卡/经历主线判断，
-姓名与精确数字可能识别错误，强推仍需人工核对原图（见 SKILL.md 阶段3）。
+对目录下每个含 render_pages 且 text 为空的 JSON：tesseract(chi_sim) 逐页识别 →
+拼接写回 text 字段，标 ocr_draft=true。定位：兜底区升级为"有底稿的待定"——
+够支撑方向/硬卡/经历主线判断，姓名与精确数字可能识别错误，强推仍需人工核对原图。
 """
 
 import os

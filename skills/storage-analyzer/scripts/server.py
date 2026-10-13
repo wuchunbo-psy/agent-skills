@@ -206,9 +206,12 @@ class Handler(BaseHTTPRequestHandler):
             if rp not in allow:
                 self._send(403, json.dumps({"ok": False, "error": "路径不在白名单：%s" % p}))
                 return
-            # 二级护栏：只允许用户目录或 /Applications（后者仅 open 用，删除白名单不含它）
+            # 二级护栏：删除类（rm/trash）只允许用户目录或 /Applications；
+            # open 为非破坏性且路径已限一级白名单（本报告显式列出的橙灯/红灯路径），
+            # Windows 多盘符下放宽到白名单本身，否则 F: 盘等橙灯项的「打开」会被误拦。
             roots = (HOME, "/Applications")
-            if not any(rp == base or rp.startswith(base + os.sep) for base in roots):
+            if mode != "open" and not any(
+                    rp == base or rp.startswith(base + os.sep) for base in roots):
                 self._send(403, json.dumps({"ok": False, "error": "路径越界：%s" % p}))
                 return
             try:

@@ -114,8 +114,8 @@ test('parallel verify produces same records as serial (D1 consistency)', async (
 test('filterPending: 疑似通知邮件不因主题关键词被跳过（资料收集回信含真简历）', () => {
   const manifest = { records: {}, processed: {} };
   const candidates = [
-    { message_id: 'n1', subject: '薪酬学历资料收集-林盛烁', from: '249941679@qq.com' },
-    { message_id: 'n2', subject: '【资料收集】深圳市迷你玩科技有限公司', from: '13422047985@163.com' },
+    { message_id: 'n1', subject: '薪酬学历资料收集-测试候选人', from: '123456789@qq.com' },
+    { message_id: 'n2', subject: '【资料收集】深圳市迷你玩科技有限公司', from: '13900000000@163.com' },
   ];
   const { pending, skipped } = filterPending(candidates, manifest);
   assert.equal(pending.length, 2, '通知样主题也必须核查（由详情事实决定相关性）');

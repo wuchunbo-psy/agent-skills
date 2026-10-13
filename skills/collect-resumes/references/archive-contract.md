@@ -28,7 +28,7 @@ $ARCHIVE_ROOT/                              ← <PROJECT_ROOT>/data/在招岗位
 |---|---|---|
 | 日期目录 | `{M.DD}_{N}份`。**M.DD = 邮件收到日**（manifest `received_at` 的月.日，resolve 阶段自动派生；`--date` 仅人工显式覆盖）。N=本目录人头数（按姓名去重）；resolve 阶段先落 `{M.DD}_暂定/`，闸门自动校正 | `7.01_7份` |
 | 已收集简历夹 | 统一名 `已收集简历`（历史遗留的"收集到简历"不改） | — |
-| 档位子目录 | 评估后按档位 `mv` 进这三个标准名之一：`强推` / `可推` / `待定·不推`（待定和不推共置） | `强推/` |
+| 档位子目录 | 评估后按档位 `mv` 进这四个标准名之一：`强推` / `可推` / `待定` / `不推`（2026-09-30 用户拍板：待定=信息缺口可激活，不推=方向/硬卡不过，两含义不同禁止共置；此前历史批次为共置目录 `待定·不推`，finalize 探测兼容识别但不回写） | `强推/` |
 | 简历文件名 | 正职 `{姓名}_{岗位简称}_{经验}年.pdf`；实习 `{姓名}_{岗位简称}_{届}.pdf`。**不含薪资**。支持 `.pdf`/`.docx`/`.doc`（`.doc` 在脱敏阶段自动转 PDF 后脱敏，转换成功删原文件） | `林艺_游戏发行运营实习生_27届.pdf` |
 
 ## 计数规则（数量闸门依据）
@@ -63,7 +63,7 @@ $ARCHIVE_ROOT/                              ← <PROJECT_ROOT>/data/在招岗位
 
 > 产物：`<PROJECT_ROOT>/notes/collection_manifest.json`
 > 生产者：`verify_mails.mjs`（生成 record）、各阶段脚本推进状态
-> 消费者：`resolve_records`/`download_attachment`/`batch_download_links`/`merge_results`/`verify_archive`（按 record_id 驱动）；`analyze-resumes`（评估报告的"当日名单"口径按 `received_at`，见其 SKILL.md 阶段7）
+> 消费者：`resolve_records`/`download_attachment`/`batch_download_links`/`merge_results`/`verify_archive`（按 record_id 驱动）；`analyze-resumes`（评估报告的"当日名单"口径按 `received_at`，见其 SKILL.md 阶段5「收尾一条链」的 `reconcile` 口径 + 阶段1 的 `--date` 说明）
 
 **顶层结构**：
 ```

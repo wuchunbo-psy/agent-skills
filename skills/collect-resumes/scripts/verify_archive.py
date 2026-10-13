@@ -50,8 +50,14 @@ def _is_resume_file(name):
         if "作品集" in name or "portfolio" in low:
             return False
         return True
-    if low.endswith(RESUME_IMG_EXTS) and ROLE_KW.search(name) and parse_name(name):
-        return True
+    if low.endswith(RESUME_IMG_EXTS):
+        # 2026-09-20 毛亚雄案例：包内图片简历常叫「简历.jpg/个人简历.png」，姓名岗位信息
+        # 都在图里不在文件名——文件名含「简历/resume」即认作简历成员（闸门对图片只报
+        # 提取阻断 warning，人工/视觉复核闭环），不再因无岗位词落"纯作品包"致批次 STOP。
+        if "简历" in name or "resume" in low:
+            return True
+        if ROLE_KW.search(name) and parse_name(name):
+            return True
     return False
 
 
@@ -475,6 +481,8 @@ def _verify_one(args):
         count_mismatch = False
         scattered = False
         art_scatter = False
+        _video_scatter = False   # 散视频检测（2026-09-23），初始绑定须在单文件模式早退路径可达处
+        _art_videos = []
         if is_single_file:
             print("【数量闸门】单文件模式，跳过（只做姓名/薪酬/格式校验）")
         else:
@@ -535,42 +543,87 @@ def _verify_one(args):
                 if root_strays:
                     scattered = True
 
-            # ---- 美术岗散件检测（2026-09-03 加，用户定稿：规则进脚本不靠记忆）----
-            # archive-naming.md：美术岗简历+作品分开发的必须打包为
+            # ---- 同人散件检测（2026-09-03 加美术端；2026-09-22 扩全路径+关键词判定）----
+            # 规则见 archive-naming.md：同人简历+作品分开发的必须打包为
             # {姓名}_{岗位}_{年限}_简历加作品.zip（包内简历先脱敏）。
-            # 同一姓名散放 简历类(pdf/docx/doc) + 作品类(pptx/jpg/png/psd/zip/rar/7z...) → STOP。
-            # 豁免：视频作品(mp4/mov/avi/mkv/webm)按 9-03 定稿独立保留不打包；
-            #       zip 内成员(!)不是散件；仅对路径含"美术端"的目录生效。
+            # 2026-09-22 两处修正（用户拍板"整理+闸门扩全路径"）：
+            #   ① 不再限「美术端」路径——任何岗位同姓名下简历类+作品类散件并存都 STOP
+            #     （周洁/孟晓楠等交互设计师散件从未被拦的根因）
+            #   ② kind 判定改「文件名关键词优先，扩展名兜底」——PDF 作品集按扩展名被当
+            #     简历类是盲区（李阳_作品集.pdf+简历加作品.pdf 并存不触发）
+            # 视频（2026-09-23 用户拍板，废除旧「视频独立保留不打包」豁免）：
+            # 必须打包为 {姓名}_作品视频.zip 与简历同夹，散视频 STOP「视频散件未打包」；
+            # 「作品视频」包名=打包终态不参与判定；zip 内成员不是散件。
             art_scatter = False
-            if "美术端" in os.path.abspath(args.target):
-                _ART_RES = (".pdf", ".docx", ".doc")
-                _ART_WORK = (".pptx", ".ppt", ".jpg", ".jpeg", ".png", ".psd",
-                             ".zip", ".rar", ".7z", ".gif", ".bmp", ".webp")
-                _ART_VIDEO = (".mp4", ".mov", ".avi", ".mkv", ".webm")
-                _art_groups = {}
-                for d, dirs, fs in os.walk(args.target):
-                    # _vision_定位/ 是 --vision 渲染工作区，不是简历资产
-                    dirs[:] = [x for x in dirs if x != "_vision_定位"]
-                    for f in fs:
-                        low = f.lower()
-                        if low.endswith(_ART_VIDEO) or not low.endswith(_ART_RES + _ART_WORK):
-                            continue
-                        if re.search(r"temp|临时|tmp", f, re.IGNORECASE):
-                            continue
-                        name_head = f.split("_", 1)[0].strip()
-                        if not name_head:
-                            continue
+            _video_scatter = False
+            _art_videos = []
+            _ART_RES = (".pdf", ".docx", ".doc")
+            _ART_WORK = (".pptx", ".ppt", ".jpg", ".jpeg", ".png", ".psd",
+                         ".zip", ".rar", ".7z", ".gif", ".bmp", ".webp")
+            _ART_VIDEO = (".mp4", ".mov", ".avi", ".mkv", ".webm")
+            _art_groups = {}
+            for d, dirs, fs in os.walk(args.target):
+                # _vision_定位/ 是 --vision 渲染工作区（PNG+rects清单），不是简历资产
+                dirs[:] = [x for x in dirs if x != "_vision_定位"]
+                for f in fs:
+                    low = f.lower()
+                    if low.endswith(_ART_VIDEO):
+                        if not re.search(r"temp|临时|tmp", f, re.IGNORECASE):
+                            _art_videos.append(os.path.relpath(os.path.join(d, f), args.target))
+                        continue
+                    if not low.endswith(_ART_RES + _ART_WORK):
+                        continue
+                    if re.search(r"temp|临时|tmp", f, re.IGNORECASE):
+                        continue
+                    if re.search(r"简历加作品|简历作品|作品简历|作品视频", f):
+                        continue   # 合集/视频包命名 = 打包终态（pdf 合集/zip 包），不是散件
+                    name_head = f.split("_", 1)[0].strip()
+                    if not name_head:
+                        continue
+                    if re.search(r"作品|portfolio", low):
+                        kind = "work"     # 文件名点名作品 → 作品类
+                    elif re.search(r"简历|resume", low):
+                        kind = "resume"   # 文件名点名简历（含图片简历）→ 简历类
+                    else:
                         kind = "resume" if low.endswith(_ART_RES) else "work"
-                        _art_groups.setdefault(name_head, {"resume": 0, "work": 0, "files": []})
-                        _art_groups[name_head][kind] += 1
-                        _art_groups[name_head]["files"].append(f)
-                for _name, _g in sorted(_art_groups.items()):
-                    if _g["resume"] and _g["work"]:
-                        art_scatter = True
-                        print(f"  🔴 美术岗散件未打包: {_name}（{', '.join(_g['files'])}）"
-                              f" → 合并为 {{姓名}}_{{岗位}}_{{年限}}_简历加作品.zip（包内简历须先脱敏）")
-                if art_scatter:
-                    report["errors"].append("art_scatter")
+                    _art_groups.setdefault(name_head, {"resume": 0, "work": 0, "files": []})
+                    _art_groups[name_head][kind] += 1
+                    _art_groups[name_head]["files"].append(f)
+            for _name, _g in sorted(_art_groups.items()):
+                if _g["resume"] and _g["work"]:
+                    art_scatter = True
+                    print(f"  🔴 同人散件未打包: {_name}（{', '.join(_g['files'])}）"
+                          f" → 合并为 {{姓名}}_{{岗位}}_{{年限}}_简历加作品.zip（包内简历须先脱敏）")
+            if _art_videos:
+                _video_scatter = True
+                print(f"  🔴 视频散件未打包: {', '.join(_art_videos)}"
+                      f" → 每人打包为 {{姓名}}_作品视频.zip 与简历同夹")
+            if art_scatter:
+                report["errors"].append("art_scatter")
+            if _video_scatter:
+                report["errors"].append("video_scatter")
+
+            # ---- 跨批次同人提示（2026-09-22 加，warning 不阻断）----
+            # 同岗位同人材料散在多个批次目录（补交/重投常态，"补交归当天批次"是合法流程），
+            # 只提示 Agent 判断是否吸收合并，不做 STOP。
+            if root_dir:
+                _cross = {}
+                for entry in sorted(os.listdir(root_dir)):
+                    bp = os.path.join(root_dir, entry)
+                    if os.path.isdir(bp) and re.match(r"^\d+\.\d+", entry):
+                        # 不走 _count_heads（其口径把「作品集.pdf」排除在人头外会漏人），
+                        # 直接收文件名头：批次内任何材料文件的名字段都算该人的在场证据
+                        for _d2, _, _fs2 in os.walk(bp):
+                            for _fn in _fs2:
+                                if re.search(r"temp|临时|tmp", _fn, re.IGNORECASE):
+                                    continue
+                                _nm = _fn.split("_", 1)[0].strip()
+                                if _nm and re.match(r"^[\u4e00-\u9fa5]{2,4}$", _nm):
+                                    _cross.setdefault(_nm, []).append(entry)
+                for _h, _bl in sorted(_cross.items()):
+                    if len(set(_bl)) >= 2:
+                        print(f"  ⚠️ 同人跨批次: {_h} 出现在 {', '.join(sorted(set(_bl)))} → 补交/重投，判断是否吸收合并")
+                        report["warnings"].append(f"cross_batch:{_h}")
 
         # ---- 姓名 + 薪酬闸门 ----
         print("\n【姓名闸门 + 薪酬闸门 + 格式验证】")
@@ -718,12 +771,13 @@ def _verify_one(args):
         # ---- 最终判定 ----
         print("\n" + "=" * 40)
         stop = bool(count_mismatch or sal_hits or manifest_bad or scattered
-                    or art_scatter)
+                    or art_scatter or _video_scatter)
         if stop:
             reasons = []
             if count_mismatch: reasons.append("数量不符")
             if scattered: reasons.append("简历散落未入日期段")
-            if art_scatter: reasons.append("美术岗散件未打包")
+            if art_scatter: reasons.append("同人散件未打包")
+            if _video_scatter: reasons.append("视频散件未打包")
             if sal_hits: reasons.append("薪酬残留")
             if manifest_bad: reasons.append("manifest闭环未过")
             print(f"🔴 STOP — {'/'.join(reasons)}，修复后再进评估")

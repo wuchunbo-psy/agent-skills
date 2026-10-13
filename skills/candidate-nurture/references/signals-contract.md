@@ -20,7 +20,7 @@
 | 项 | 值 |
 |---|---|
 | 路径 | `notes/_signals.json`（项目根相对） |
-| 生成方式 | `signals.py --set/--decide`（Agent 判读后写临时 JSON，工具自动补 talent_id + 校验 + 原子写） |
+| 生成方式 | `signals.py --set/--decide`（Agent 判读后写临时 JSON，工具自动补 talent_id + 校验 + 原子写）；`--set` 输入=JSON 数组（也接受 `{"signals": [...]}` 包装），`--decide` 同理接受 `{"decisions": [...]}` 包装；喂工具前先 `python -m json.tool` 校验临时文件 |
 | 生成时机 | daily-recruit-report 早晨对账 step 3.5（判读完 raw_messages 后）+ step 4.5（用户决策后） |
 | 新鲜度 | 顶层 `date`（YYYY-MM-DD）；消费者用前校验 `date == 今天`，过期提示重跑 |
 | 不存在时 | candidate-nurture **拒绝执行**（前置 gate 失败，不产出清单），引导用户先完成 daily-recruit-report 早晨对账 |

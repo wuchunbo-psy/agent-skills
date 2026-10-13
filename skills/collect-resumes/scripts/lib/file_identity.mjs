@@ -83,6 +83,9 @@ export function detectTypeFromBuffer(buf) {
   // HTML 错误页检测
   const head200 = buf.slice(0, 200).toString('latin1');
   if (/<\s*html|<\s*!doctype/i.test(head200)) return 'html';
+  // MP4/MOV 容器（ftyp box，2026-09-30 加：曾鹏作品演示 reel 案——264MB 视频顶着 .zip 名
+  // 入库，因白名单无视频分支扩展名未校正）。bytes[4:8]=='ftyp' 为 ISO-BMFF 容器特征。
+  if (buf.length >= 8 && buf.slice(4, 8).toString('latin1') === 'ftyp') return 'video';
   return 'unknown';
 }
 
@@ -102,6 +105,7 @@ export function typeMatchesExtension(ext, detectedType) {
   if (extLower === 'rar') return detectedType === 'rar';
   if (extLower === '7z') return detectedType === '7z';
   if (['png', 'jpg', 'jpeg', 'gif', 'bmp'].includes(extLower)) return detectedType === 'image';
+  if (['mp4', 'mov', 'webm', 'avi', 'mkv'].includes(extLower)) return detectedType === 'video' || detectedType === 'unknown';
   // 未知扩展名不自动拒绝（可能是 rar 等，交给上层判断）
   return true;
 }

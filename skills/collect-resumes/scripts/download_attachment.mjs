@@ -27,6 +27,53 @@ import { getArg, isDirectRun, runLarkSync } from './lib/cli_helpers.mjs';
 import { mergeResults } from './merge_results.mjs';
 import { LARK_CLI as CLI, UNSAFE_DIR, RESULTS_DIR, MANIFEST as MANIFEST_DEFAULT } from './lib/paths.mjs';
 
+// ---- 同批内容查重注册表（2026-09-20 唐诗晨案例）----
+// 批内并发下载时，manifest 快照里彼此还是 verified，"manifest 孪生 SHA 检查"互相看不见
+// → 同人同日两封同内容附件（BOSS 版+直投版）双双 committed 入库。
+// 注册表在 recSha 计算后同步块内查、commit 后同步块内写：check→commit→set 之间无 await，
+// JS 单线程下天然原子（并发 worker 只可能在 await 处交错）。跨批/跨运行仍走 manifest 孪生检查。
+export const batchCommittedIndex = new Map(); // key: name\0末级岗位\0sha -> { record_id, target_filename }
+
+export function batchDupKey(rec, sha) {
+  const normJob = (j) => String(j || '').split('/').pop();
+  return `${(rec.candidate_name || '')}\u0000${normJob(rec.job_name)}\u0000${sha}`;
+}
+
+export function lookupBatchDuplicate(index, rec, sha) {
+  const hit = index.get(batchDupKey(rec, sha));
+  return hit && hit.record_id !== rec.record_id ? hit : null;
+}
+
+/**
+ * 2026-09-20 补强（谢平鑫案例暴露）：分档分发（finalize）会把文件挪进批次目录下的
+ * 档次子夹（强推/可推/待定/不推，2026-09-30 起四档；历史批次为共置 待定·不推），
+ * manifest 不回写 → 孪生直拼路径 existsSync=false 被跳过，
+ * 判重对已分发记录失明。按 target_filename 在批次目录树（限深 3 层）内兜底定位。
+ * @returns {string|null} 孪生文件实际路径
+ */
+export function findMovedTwin(twin) {
+  const direct = path.join(twin.target_dir, twin.target_filename).replace(/\\/g, '/');
+  if (fs.existsSync(direct)) return direct;
+  const root = twin.target_dir;
+  if (!root || !fs.existsSync(root)) return null;
+  const rootDepth = root.replace(/\/$/, '').split('/').length;
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const ent of entries) {
+      const p = path.join(dir, ent.name).replace(/\\/g, '/');
+      if (ent.isDirectory()) {
+        if (p.split('/').length - rootDepth <= 3) stack.push(p);
+      } else if (ent.name === twin.target_filename) {
+        return p;
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * 下载 URL 到 buffer，带 content-length 校验和重试。
  *
@@ -135,10 +182,59 @@ export async function downloadByRecord(manifest, recordId, runner) {
 
   // 写到 .part，然后事务提交
   const targetPath = path.join(rec.target_dir, rec.target_filename).replace(/\\/g, '/');
+  // 非法文件名字符 fail-fast（2026-09-11 事故：target_filename 带 \r → 全量 ENOENT 且
+  // 报错引号被 \r 吞掉极难排查。防御在下载侧兜住 manifest 历史脏数据。）
+  const illegal = /[\\/:*?"<>|\x00-\x1f]/.exec(rec.target_filename || '');
+  if (illegal) {
+    throw new Error(`ILLEGAL_FILENAME: target_filename 含非法字符 ${JSON.stringify(illegal[0])} (U+${illegal[0].charCodeAt(0).toString(16)})，请重新 resolve 清洗: ${JSON.stringify(rec.target_filename)}`);
+  }
   const partPath = `${targetPath}.part.${Date.now()}`;
   fs.mkdirSync(path.dirname(partPath), { recursive: true });
   fs.writeFileSync(partPath, buf);
+
+  // 2026-09-15 盛明明事故机制化修复：判重从 resolve 层"猜"（姓名+岗位，无内容判据）后移到
+  // 这里拿 SHA 事实判定。BOSS 候选人分两封投简历+作品（附件名按平台规则完全相同）曾 4 次
+  // 被误判重复（刘小六/苏树林/林秋钰/盛明明）。同人同岗 twin：SHA 相同=真重发 → 抛
+  // duplicateOf 由收尾循环转 excluded(DUPLICATE_CONTENT)（--new-version 可重开）；
+  // SHA 不同=不同材料 → 正常归档（target 同名冲突由 SAMEDAY 分流改名兜住）。
+  const recSha = sha256File(partPath);
+  const normJob = (j) => String(j || '').split('/').pop();
+
+  // 同批查重（唐诗晨案例）：先查本批已提交注册表，再查 manifest 孪生
+  const batchPrior = lookupBatchDuplicate(batchCommittedIndex, rec, recSha);
+  if (batchPrior) {
+    fs.unlinkSync(partPath);
+    throw Object.assign(
+      new Error(`DUPLICATE_CONTENT: 与同批已提交 ${batchPrior.target_filename} SHA 相同（${recSha.slice(0, 12)}…），判同内容重复`),
+      { duplicateOf: batchPrior.record_id, sha: recSha }
+    );
+  }
+
+  const twins = Object.values(manifest.records || {}).filter(r =>
+    r.record_id !== recordId &&
+    r.status === 'archived' &&
+    (r.candidate_name || '') === (rec.candidate_name || '') &&
+    normJob(r.job_name) === normJob(rec.job_name)
+  );
+  for (const twin of twins) {
+    if (!twin.target_dir || !twin.target_filename) continue;
+    // 分档分发会挪文件且 manifest 不回写 → findMovedTwin 在批次目录树内兜底定位
+    const twinPath = findMovedTwin(twin);
+    if (!twinPath) continue; // 历史 FILE_LOST/定位不到，跳过该 twin
+    if (sha256File(twinPath) === recSha) {
+      fs.unlinkSync(partPath);
+      throw Object.assign(
+        new Error(`DUPLICATE_CONTENT: 与已归档 ${twin.target_filename}（收到 ${twin.received_at || '?'}）SHA 相同，判真重发跳过`),
+        { duplicateOf: twin.record_id, sha: recSha }
+      );
+    }
+  }
+
   const result = commitVerifiedFile(partPath, targetPath, ext === 'docx' ? 'docx' : detected);
+  batchCommittedIndex.set(batchDupKey(rec, result.sha256), {
+    record_id: recordId,
+    target_filename: rec.target_filename,
+  });
 
   // 写独立结果 JSON（不直接改 manifest，由 merge_results 合并）
   // recordId 含冒号（sha256:xxx），Windows 把冒号当 NTFS ADS 分隔符截断文件名 → 用下划线替换
@@ -247,29 +343,19 @@ async function main() {
 
   if (batchIds) {
     let manifest = readManifest(manifestPath);
-    // ---- 批量前置自愈（2026-08-17 积压清理）----
-    // 1) target 路径脏数据：早期 resolve 产物有反斜杠路径/无日期段（直接指向已收集简历根）/
+    // ---- 批量前置自愈（仅 target 路径修复）----
+    // target 路径脏数据：早期 resolve 产物有反斜杠路径/无日期段（直接指向已收集简历根）/
     //    日期段=处理日而非收到日（8.13_暂定 但 received 7 月）。按契约重算：正斜杠 +
     //    日期段=received_at 的 M.DD，同日期段已有 _N份 目录则直接进，否则 _暂定（闸门收敛）。
-    // 2) 已归档重复：同人同岗已有 archived/validated 记录的 verified → exclude，
-    //    不重复下载污染已评估档位（--backlog 清历史积压时的大头）。
-    let healed = 0, deduped = 0;
-    const archivedKeys = new Set(
-      Object.values(manifest.records)
-        .filter(r => ['archived', 'validated'].includes(r.status) && r.candidate_name)
-        .map(r => `${r.candidate_name}\u0000${r.job_name}`)
-    );
+    // 2026-09-20 移除"同人同岗已有归档 → 排除"分支（谢平鑫案例）：下载前按姓名+岗位排除
+    //    是无内容证据判重（BOSS 分投简历+作品=不同材料，曾 4 次误杀刘小六/苏树林/林秋钰/
+    //    盛明明），且绕过 9-16 resolve 层护栏。判重统一下移到 downloadByRecord 的 SHA 事实
+    //    判定：孪生同 SHA → DUPLICATE_CONTENT（带证据，--new-version 可重开）；不同 SHA →
+    //    正常归档（同名冲突改名兜住）。状态机层护栏见 lib/manifest.mjs transitionToExcluded。
+    let healed = 0;
     for (const rid of batchIds) {
       const rec = manifest.records[rid];
       if (!rec) continue;
-      // new-version 补充版：同人同岗是预期状态（旧版已归档），不去重
-      if (rec.new_version) continue;
-      if (rec.candidate_name && archivedKeys.has(`${rec.candidate_name}\u0000${rec.job_name}`)) {
-        manifest.records[rid] = transitionToExcluded(rec, 'DUPLICATE_ALREADY_ARCHIVED',
-          `同人同岗已有归档记录，积压清理时跳过重复下载`);
-        deduped++;
-        continue;
-      }
       if (!rec.target_dir) continue;
       let td = String(rec.target_dir).replace(/\\/g, '/');
       // 仅当 target_dir 本身以「已收集简历」结尾（无日期段）才补 M.DD_暂定；
@@ -277,8 +363,10 @@ async function main() {
       if (td.replace(/\/$/, '').endsWith('已收集简历')) {
         td = `${td.replace(/\/$/, '')}/${archiveDateSegment(rec)}_暂定`;
       } else if (td.endsWith('_暂定') && !fs.existsSync(td)) {
+        // _暂定 已被闸门收敛改名（_N份）或清理：回到其父目录（已收集简历 根）找同日期段 _N份
+        const parent = path.dirname(td);
         const day = archiveDateSegment(rec);
-        const existN = fs.existsSync(parent) && fs.readdirSync(parent)
+        const existN = (fs.existsSync(parent) ? fs.readdirSync(parent) : [])
           .filter(n => n.startsWith(`${day}_`) && /_\d+份$/.test(n)).sort()[0];
         td = existN ? `${parent}/${existN}` : `${parent}/${day}_暂定`;
       }
@@ -287,9 +375,9 @@ async function main() {
         healed++;
       }
     }
-    if (healed || deduped) {
+    if (healed) {
       writeManifestAtomic(manifestPath, manifest);
-      console.log(`🔧 批量前置自愈：target 路径修正 ${healed} 条，已归档重复排除 ${deduped} 条`);
+      console.log(`🔧 批量前置自愈：target 路径修正 ${healed} 条`);
       batchIds = batchIds.filter(rid => manifest.records[rid] && manifest.records[rid].status === 'verified');
     }
     const succeeded = [], failed = [], conflicts = [];
@@ -325,43 +413,45 @@ async function main() {
     for (const oc of outcomes) {
       if (oc.ok) { succeeded.push(oc.rid); continue; }
       const e = oc.e;
+      if (e.duplicateOf) {
+        // 2026-09-15 盛明明事故机制化修复：同人同岗已归档文件 SHA 相同=真重发，
+        // 结构化排除（DUPLICATE_CONTENT 在 DUP_REOPEN_CODES 白名单，--new-version 可重开）。
+        // 2026-09-20：排除必须带 SHA 证据（状态机护栏要求），e.sha 由判重抛出方附带。
+        try {
+          const cur = readManifest(manifestPath);
+          const updated = transitionToExcluded(cur.records[oc.rid], 'DUPLICATE_CONTENT', e.message, { sha256: e.sha });
+          writeManifestAtomic(manifestPath, upsertRecord(cur, updated));
+          console.log(`  ⏭️ 内容重复（SHA 同）已排除: ${cur.records[oc.rid].target_filename}`);
+          conflicts.push(oc.rid);
+        } catch (exErr) {
+          console.error(`  🔴 重复处理失败: ${exErr.message.slice(0, 80)}`);
+          failed.push({ id: oc.rid, error: e.message.slice(0, 120) });
+        }
+        continue;
+      }
       if (e.conflictPath) {
-        // 同名目标已存在且内容不同。两类场景分流（2026-08-20 刘小六作品集误杀教训）：
-        // ① 两条记录 original_filename 不同（如"作品集-【…】姓名_年限.pdf" vs "【…】姓名_年限.pdf"）
-        //    = 同日发的**不同材料**（简历+作品集）→ 冲突副本加区分后缀归档，不排除
-        // ② original_filename 相同 = 当天重发同份简历 → 删副本、结构化排除（原逻辑）。
-        //    真有新版简历：源邮件仍在（message_id 可回溯），resolve --new-version 重开。
+        // 同名目标已存在且内容不同（SHA 不同=内容不同是事实判据）。到这里的必然是不同材料
+        // （真重发已被下载前 twin SHA 判重拦截、同内容重复走 commit 幂等），一律加区分后缀
+        // 改名归档。2026-09-15 盛明明事故教训：旧版按 original_filename 分流，BOSS 同名附件
+        // 两封分投简历+作品时第二份被误排除——文件名相同不代表内容相同，只有 SHA 说了算。
         try {
           const cur = readManifest(manifestPath);
           const rec = cur.records[oc.rid];
-          const twin = Object.values(cur.records).find(x =>
-            x.record_id !== rec.record_id && x.status === 'archived' &&
-            x.target_filename === rec.target_filename && x.target_dir === rec.target_dir);
-          const sameOriginal = twin && (twin.original_filename || '') === (rec.original_filename || '');
-          if (!sameOriginal) {
-            const suffix = /作品集|portfolio/i.test(rec.original_filename || '') ? '_作品集' : '_2';
-            const dot = rec.target_filename.lastIndexOf('.');
-            const renamed = rec.target_filename.slice(0, dot) + suffix + rec.target_filename.slice(dot);
-            const newTarget = path.join(rec.target_dir, renamed).replace(/\\/g, '/');
-            fs.renameSync(e.conflictPath, newTarget);
-            rec.target_filename = renamed;
-            cur.records[oc.rid] = rec;
-            writeManifestAtomic(manifestPath, upsertRecord(cur, rec));
-            fs.mkdirSync(RESULTS_DIR, { recursive: true });
-            fs.writeFileSync(path.join(RESULTS_DIR, `${oc.rid.replace(/[:*?"<>|]/g, '_')}.result.json`), JSON.stringify({
-              record_id: oc.rid, outcome: 'committed', sha256: sha256File(newTarget),
-              target_path: newTarget, at: new Date().toISOString(),
-            }, null, 2));
-            console.log(`  ♻️ 同名不同材料（original_filename 不同），改名 ${renamed} 归档`);
-            succeeded.push(oc.rid);
-            continue;
-          }
-          fs.unlinkSync(e.conflictPath);
-          const updated = transitionToExcluded(rec, 'SAMEDAY_CONFLICT',
-            `同名目标已存在且内容不同，判同日重复投递，保留已归档版本。目标: ${rec.target_filename}`);
-          writeManifestAtomic(manifestPath, upsertRecord(cur, updated));
-          console.log(`  ⏭️ 同日冲突已排除: ${rec.target_filename}`);
-          conflicts.push(oc.rid);
+          const suffix = /作品集|portfolio/i.test(rec.original_filename || '') ? '_作品集' : '_2';
+          const dot = rec.target_filename.lastIndexOf('.');
+          const renamed = rec.target_filename.slice(0, dot) + suffix + rec.target_filename.slice(dot);
+          const newTarget = path.join(rec.target_dir, renamed).replace(/\\/g, '/');
+          fs.renameSync(e.conflictPath, newTarget);
+          rec.target_filename = renamed;
+          cur.records[oc.rid] = rec;
+          writeManifestAtomic(manifestPath, upsertRecord(cur, rec));
+          fs.mkdirSync(RESULTS_DIR, { recursive: true });
+          fs.writeFileSync(path.join(RESULTS_DIR, `${oc.rid.replace(/[:*?"<>|]/g, '_')}.result.json`), JSON.stringify({
+            record_id: oc.rid, outcome: 'committed', sha256: sha256File(newTarget),
+            target_path: newTarget, at: new Date().toISOString(),
+          }, null, 2));
+          console.log(`  ♻️ 同名不同内容（SHA 不同），改名 ${renamed} 归档`);
+          succeeded.push(oc.rid);
         } catch (exErr) {
           console.error(`  🔴 冲突处理失败: ${exErr.message.slice(0, 80)}`);
           failed.push({ id: oc.rid, error: e.message.slice(0, 120) });

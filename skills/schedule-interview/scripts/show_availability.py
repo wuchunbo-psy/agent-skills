@@ -5,7 +5,7 @@
 输出三种形式（skill 标准展示）：
   1. markdown 表格：日期 | 空闲时段 | 备注（自动生成"最宽裕/时段零碎/周末"等备注）
   2. 可排档位列表（默认 45 分钟/场切档，只列未来档位）
-  3. --svg <path>：生成时间轴色段图（SVG），空闲绿/会议红（标候选人+时刻）/午休灰/已过半透明；周末整行不画
+  3. --svg <path>：生成时间轴色段图（SVG），空闲绿/会议红（标候选人+时刻）/午休灰/已过半透明；全空周末整行不画，有安排/今天的周末日照画（行尾「周末」徽标）；调休补班日按工作日照画（--workdays 可追加名单）
   4. --html <path>：生成 HTML 色段条（div 布局文件）。**2026-09-02 起对话内联标准 = --svg 出图后 Playwright 渲 PNG 3 倍分辨率内嵌**；SVG/HTML 作为文件产物留存
 
 用法：
@@ -25,7 +25,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from match_schedule import resolve_interviewers, get_freebusy_blocks, TZ
+from match_schedule import resolve_interviewers, get_freebusy_blocks, TZ, is_weekend, EXTRA_WORKDAYS
 
 
 def _short_job(title):
@@ -135,8 +135,7 @@ def remark_for(day, today, segs, weekend_note, coverage):
     """备注列自动生成"""
     if day < today:
         return "已过去"
-    wd = day.weekday()
-    if wd >= 5:
+    if is_weekend(day):
         return "周末·一般不上班"
     if not segs:
         return "❌ 无可约时段"
@@ -170,8 +169,10 @@ def build_svg(title, subtitle, days_info, ws_h, we_h, today, now, duration, out_
     days_info: [(label, seg_txt, remark, day_data)] 其中 day_data =
       {"date", "free": [(s,e),...], "busy": [(s,e,who?),...], "weekend": bool, "past": bool}
     """
-    # 周末整行不画（2026-09-03 用户定稿）：窗口内的周六日直接不出行
-    days_info = [d for d in days_info if not d[3].get("weekend")]
+    # 周末行：全空周末不画；有会议/面试或是今天的周末日照画（行尾标「周末」徽标），
+    # 调休补班日（is_weekend=False）按工作日照画
+    days_info = [d for d in days_info
+                 if not d[3].get("weekend") or d[3].get("busy") or d[3]["date"] == today]
     # 画布宽 2026-09-03：680→1070，45 分钟面试块≈61px，块内两行标（姓名+时刻）放得下
     X0, X1 = 130, 1030
     W = X1 - X0
@@ -195,7 +196,7 @@ def build_svg(title, subtitle, days_info, ws_h, we_h, today, now, duration, out_
     parts.append(f'<svg viewBox="0 0 {X1 + 40} {H}" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" font-family="PingFang SC, Microsoft YaHei, sans-serif">')
     parts.append(f'<rect x="0" y="0" width="{X1 + 40}" height="{H}" fill="#FBFAF6"/>')
     parts.append(f"<title>{title}</title>")
-    parts.append("<desc>面试官可约时段色段图：绿=空闲可约（块内标起止与时长），红=已有会议（标候选人+时刻），灰=午休，半透明=已过时段，周末不画</desc>")
+    parts.append("<desc>面试官可约时段色段图：绿=空闲可约（块内标起止与时长），红=已有会议（标候选人+时刻），灰=午休，半透明=已过时段，全空周末不画（有安排的周末日照画）</desc>")
     parts.append(f'<text x="36" y="34" font-size="22" font-weight="700" fill="#2C2C2A">{title}</text>')
     parts.append(f'<text x="36" y="58" font-size="13" fill="#6B6A64">{subtitle}</text>')
     # 图例
@@ -208,8 +209,8 @@ def build_svg(title, subtitle, days_info, ws_h, we_h, today, now, duration, out_
     parts.append(f'<text x="382" y="{ly+13}" font-size="13" fill="#444441">午休</text>')
     parts.append(f'<rect x="446" y="{ly}" width="16" height="16" rx="4" fill="#9FE1CB" opacity="0.45"/>')
     parts.append(f'<text x="468" y="{ly+13}" font-size="13" fill="#444441">已过</text>')
-    # 当前时刻胶囊（右上）
-    if today.weekday() < 5:
+    # 当前时刻胶囊（右上）：今天出现在图里就画（含调休日/有安排的周末）
+    if not is_weekend(today) or any(d[3]["date"] == today for d in days_info):
         parts.append(f'<rect x="{X1 - 104}" y="14" width="104" height="26" rx="13" fill="#EFEDE4"/>')
         parts.append(f'<text x="{X1 - 52}" y="31" font-size="13" fill="#55544F" text-anchor="middle">当前 {now.strftime("%H:%M")}</text>')
 
@@ -286,6 +287,8 @@ def build_svg(title, subtitle, days_info, ws_h, we_h, today, now, duration, out_
                         parts.append(f'<text x="{cx:.1f}" y="{y + ROW_H / 2 + 5:.1f}" font-size="12" font-weight="600" fill="#7E2424" text-anchor="middle">{shown}</text>')
                 elif w >= 76:
                     parts.append(f'<text x="{(x_s + x_e) / 2:.1f}" y="{y + ROW_H / 2 + 5:.1f}" font-size="12" fill="#7E2424" text-anchor="middle">{ss.strftime("%H:%M")}-{ee.strftime("%H:%M")}</text>')
+                elif w >= 30:
+                    parts.append(f'<text x="{(x_s + x_e) / 2:.1f}" y="{y + ROW_H / 2 + 5:.1f}" font-size="11" fill="#7E2424" text-anchor="middle">{ss.strftime("%H:%M")}</text>')
         # 今天已过时段整段弱化（subtitle 承诺"半透明=已过"；块级判断只盖整块已过的，跨当前时刻的块由这里兜底）
         if day == today:
             ov_e = min(X1, tx(now.strftime("%H:%M")))
@@ -296,9 +299,11 @@ def build_svg(title, subtitle, days_info, ws_h, we_h, today, now, duration, out_
             now_x = tx(now.strftime("%H:%M"))
             if X0 < now_x < X1:
                 parts.append(f'<line x1="{now_x}" y1="{y}" x2="{now_x}" y2="{y+ROW_H}" stroke="#C0564C" stroke-width="1.6" stroke-dasharray="4,3"/>')
-        # 右侧标记
+        # 右侧标记：已过优先，真周末（有安排才画出来的）标徽标提醒
         if past:
             parts.append(f'<text x="{X1 + 16}" y="{y + ROW_H / 2 + 5:.1f}" font-size="13" fill="#A32D2D" text-anchor="end">已过</text>')
+        elif data.get("weekend"):
+            parts.append(f'<text x="{X1 + 16}" y="{y + ROW_H / 2 + 5:.1f}" font-size="13" fill="#8B897F" text-anchor="end">周末</text>')
 
     # 时间轴
     parts.append(f'<line x1="{X0}" y1="{AXIS_Y}" x2="{X1}" y2="{AXIS_Y}" stroke="#D6D3C8" stroke-width="1"/>')
@@ -334,11 +339,11 @@ def build_html(title, subtitle, days_info, ws_h, we_h, today, now, duration, out
         '<span style="display:flex;align-items:center;gap:4px"><span style="width:14px;height:14px;border-radius:2px;background:#F7C1C1;display:inline-block"></span>已有会议</span>'
         '<span style="display:flex;align-items:center;gap:4px"><span style="width:14px;height:14px;border-radius:2px;background:#D3D1C7;display:inline-block"></span>午休</span>'
         '<span style="color:#888780">半透明 = 已过 / 周末</span></div>')
-    now_pct = pct(now) if today.weekday() < 5 else None
+    now_pct = pct(now) if not is_weekend(today) else None
     for label, _, _, data in days_info:
         day = data["date"]
         past = day < today
-        weekend = day.weekday() >= 5
+        weekend = is_weekend(day)
         day_s = datetime.datetime(day.year, day.month, day.day, ws_h, 0, tzinfo=TZ)
         day_e = datetime.datetime(day.year, day.month, day.day, we_h, 0, tzinfo=TZ)
 
@@ -399,7 +404,9 @@ def main():
     ap.add_argument("--svg", default="", help="生成色段图 SVG 文件路径（如 availability.svg）")
     ap.add_argument("--png", default="", help="生成 PNG 3x 文件路径（对话内嵌标准产物；未传 --svg 时自动同目录产 SVG 原稿）")
     ap.add_argument("--html", default="", help="生成 HTML 色段条文件路径（文件产物；内联标准=PNG 3x）")
+    ap.add_argument("--workdays", default="", help="调休补班日 YYYY-MM-DD，逗号分隔：名单里的周六日按工作日展示/画行")
     args = ap.parse_args()
+    EXTRA_WORKDAYS.update(x.strip() for x in args.workdays.split(",") if x.strip())
 
     ws_h, ws_m = parse_hhmm(args.work_start)
     we_h, we_m = parse_hhmm(args.work_end)
@@ -475,7 +482,7 @@ def main():
         remark = remark_for(d, today, segs, True, coverage)
         days_info.append((label, seg_txt, remark, {
             "date": d, "free": segs, "busy": busy_segs,
-            "weekend": d.weekday() >= 5, "past": d < today,
+            "weekend": is_weekend(d), "past": d < today,
         }))
         if d < today:
             print(f"{label}: 已过去，跳过")

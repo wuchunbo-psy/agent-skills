@@ -34,7 +34,7 @@ except ImportError:
 
 from salary_pattern import SALARY
 from paths import SEVEN_ZIP
-from archive_safety import check_zip, decode_zip_name
+from archive_safety import check_zip, decode_zip_name, MAX_SINGLE_FILE_MEDIA
 
 # 白色覆盖（铁律：禁止黑色）
 FILL_COLOR = (1, 1, 1)
@@ -388,6 +388,9 @@ def redact_zip(zip_path, patterns=None, dry_run=False):
                 norm = real_name.replace("\\", "/")
                 if "__MACOSX/" in norm or os.path.basename(norm).startswith("._"):
                     continue
+                # Office 锁文件（~$xxx.docx，58字节非文档，2026-09-29 许正阳 rar 案致 BadZipFile 崩溃）
+                if os.path.basename(norm).startswith("~$"):
+                    continue
                 target = os.path.join(tmpdir, real_name.replace("\\", "/"))
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 with zin.open(info) as src, open(target, 'wb') as dst:
@@ -563,9 +566,9 @@ def redact_rar(rar_path, patterns=None, dry_run=False, output=None):
             print(f"❌ RAR 安全检查失败（拒绝解压）: {bad}", file=sys.stderr)
             return [("__BLOCKED__", bad)], False, None
 
-        # 7z 解压
+        # 7z 解压（排除 Office 锁文件 ~$*：非文档临时件，2026-09-29 许正阳 rar 案致 BadZipFile 崩溃）
         r = subprocess.run(
-            [SEVEN_ZIP, "x", rar_path, f"-o{tmpdir}", "-y"],
+            [SEVEN_ZIP, "x", rar_path, f"-o{tmpdir}", "-y", "-xr!~$*"],
             capture_output=True, timeout=300
         )
         if r.returncode != 0:
@@ -575,6 +578,8 @@ def redact_rar(rar_path, patterns=None, dry_run=False, output=None):
         # 逐个脱敏包内简历
         for root, _, files in os.walk(tmpdir):
             for f in files:
+                if f.startswith("~$"):
+                    continue
                 lower = f.lower()
                 if not (lower.endswith('.pdf') or lower.endswith('.docx') or lower.endswith('.doc')):
                     continue
@@ -597,6 +602,20 @@ def redact_rar(rar_path, patterns=None, dry_run=False, output=None):
         # 重打包为 zip（rar 转 zip，即使无薪酬也转）
         out_path = None
         if not dry_run:
+            # 超大成员护栏（2026-09-29 刘新榕 2.3GB avi 案）：zip 单成员上限 2GB，
+            # 含超大成员的包转 zip 会在闸门安全检查必死循环。此时保留原 rar/7z 不转——
+            # 闸门对 .rar/.7z 走最小安全检查（无单成员上限），可正常通过。
+            oversized = []
+            for root, _, files in os.walk(tmpdir):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    if os.path.getsize(fp) > MAX_SINGLE_FILE_MEDIA:
+                        oversized.append((f, os.path.getsize(fp)))
+            if oversized:
+                names = "、".join(f"{n}({s/1e9:.1f}GB)" for n, s in oversized[:3])
+                print(f"ℹ️ 包内含超大成员 {names}，保留原归档不转 zip（zip 单成员上限 2GB，转包会在闸门被安全检查拦截）；"
+                      f"超大成员无文本层，薪酬风险仅为包内文档类成员（已扫）", file=sys.stderr)
+                return hits, modified, None
             # 相对路径统一转绝对（防 zip 生成到调用方 CWD 的坑）
             out_path = os.path.abspath(output or (os.path.splitext(rar_path)[0] + '.zip'))
             with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED) as zout:

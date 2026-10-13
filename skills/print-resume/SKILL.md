@@ -8,10 +8,16 @@ description: 候选人简历打印：从归档库定位 → 自动截取简历�
 ## 默认场景一条命令
 
 ```bash
-cd ~/.agents/skills/print-resume && PYTHONIOENCODING=utf-8 python scripts/print_resume.py --name 候选人姓名
+cd "…/print-resume" && PYTHONIOENCODING=utf-8 \
+  "python" \
+  scripts/print_resume.py --name 候选人姓名
 ```
 
 agent 收到打印请求后直接跑此命令，脚本自决：定位文件 → 判断页范围 → 截取（如需） → 打印，stdout 每步有报告。**不要手工拼 SumatraPDF 命令**（参数/打印机名/退出码翻译都已固化在脚本里）。
+
+> **解释器**：managed 默认解释器（裸 `python` 解析到的 `versions/3.13.12`）已装 PyMuPDF，可直接跑。若遇 `ModuleNotFoundError: No module named 'fitz'`，换用：`python`（fitz 1.28.0）或 `C:/Python314/python.exe`。
+>
+> 另：若 bash 报 `dirname/head/tail: command not found`（PATH 缺 coreutils），命令前先 `export PATH="~/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:$PATH"`。
 
 > **⚠️ 只打现场面试（2026-09-08 用户定稿）**：视频面试不用打印简历（面试官在屏幕上看）。打印前先核对面试形式——查 `notes/_daily_review.json` 的 `structured.today_interviews[*].interview_type`：`现场面试`才打，`视频面试`跳过。用户说「打印一下」指的通常只是当天/最近的现场面试候选人，别把视频场一起打了。
 

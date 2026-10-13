@@ -8,8 +8,10 @@
 //
 // 阶段（全部复用既有脚本，本文件只做编排，不重复实现任何逻辑）：
 //   scan_all → verify_mails(增量) → resolve --auto（目录日期段=各记录邮件收到日）
+//   → reaudit_duplicates(阶段3.5 重复排除重审，误杀自动重开)
 //   → download_attachment(scope 内 verified) → batch_download_links(scope 内链接)
 //   → [自动合并已内置] → redact_salary --dir → verify_archive（每个受影响目录）
+//   → reaudit_duplicates --labels-only(阶段5.5 冲突件 _2 内容定名，视觉队列兜底)
 //
 // 失败语义（fail-closed）：
 //   - 阶段脚本非零退出 → 如实报告，已完成的保留；闸门 STOP 不掩盖。
@@ -81,6 +83,14 @@ async function main() {
     humanNotes.push(`🔴 resolve --auto 异常退出（退出码 ${resolveCode}），本批记录可能全部未解析——重跑或单条 resolve`);
   }
 
+  // ---- 阶段3.5：重复排除重审（2026-09-16 用户拍板"同文件名≈简历+作品两份材料，要用机制多检查一遍"）----
+  // 历史上未下载（无 sha256）就被打 DUPLICATE_* 排除码的记录，重下载按 SHA/文本层重判：
+  // 误杀的当场重开到 verified，下面的下载阶段接手正常归档。退出码 2=有重开（正常）。
+  const reauditCode = runNode('reaudit_duplicates.mjs', ['--manifest', manifestPath]);
+  if (reauditCode !== 0 && reauditCode !== 2) {
+    humanNotes.push(`🔴 重复排除重审异常（退出码 ${reauditCode}），见上方日志`);
+  }
+
   // ---- 阶段4：下载（默认今天收到的记录；--date 限定收到日；--backlog 全量）----
   // "何时收到"唯一判定依据 = received_at（邮件真实时间，见 lib/dates.mjs）。
   // updated_at 会被增量核查刷新、created_at 是首次入库时间，都不能代表邮件时间。
@@ -142,6 +152,15 @@ async function main() {
       const gateCode = runPython('verify_archive.py', [dir, '--manifest', manifestPath]);
       gateResults.push({ dir, ok: gateCode === 0, stage: 'gate', code: gateCode });
     }
+  }
+
+  // ---- 阶段5.5：冲突件内容定名（2026-09-16 用户拍板升级）----
+  // 同名简历+作品冲突后缀 `_2` 的归档件：多页/文本证据自动改名 `_作品集`；
+  // 证据不足的渲染首页进 notes/_label_queue/ 视觉队列，由主会话看图后
+  // --apply-label 落名。放在闸门后跑，当日新归档的冲突件当天定名。
+  if (finish) {
+    const labelCode = runNode('reaudit_duplicates.mjs', ['--labels-only', '--manifest', manifestPath]);
+    if (labelCode !== 0) humanNotes.push(`🔴 冲突件定名异常（退出码 ${labelCode}），见上方日志`);
   }
 
   // ---- 汇总 ----

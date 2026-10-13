@@ -4,6 +4,7 @@ verify_archive 回归测试。
 验证关键 P0/P1 故障路径已修复（fail-closed）。
 """
 
+import io
 import os
 import sys
 import unittest
@@ -312,6 +313,127 @@ class TestPendingDirAutoRename(unittest.TestCase):
         names = os.listdir(self.collected)
         self.assertIn("7.31_2份", names, "_暂定 应被收敛为 _2份")
         self.assertNotIn("7.31_暂定", names)
+
+
+class TestImageResumeRecognition(unittest.TestCase):
+    """2026-09-20 毛亚雄案例回归：zip 内仅「简历.jpg」类图片简历不再判纯作品包致批次 STOP。"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.collected = os.path.join(self.tmpdir, "项目", "岗位", "已收集简历")
+
+    def test_keyword_image_is_resume_member(self):
+        self.assertTrue(va._is_resume_file("简历.jpg"))
+        self.assertTrue(va._is_resume_file("个人简历.PNG"))
+        self.assertTrue(va._is_resume_file("resume.png"))
+        self.assertTrue(va._is_resume_file("毛亚雄_3D动作设计师_9年_简历.jpg"))
+        # 无关键词无岗位词的作品散图仍不认
+        self.assertFalse(va._is_resume_file("demo.jpg"))
+        self.assertFalse(va._is_resume_file("张三_作品1.jpg"))
+
+    def test_zip_with_keyword_image_resume_passes_gate(self):
+        """端到端：批次内 zip 只含「简历.jpg」→ 认作简历成员，不再报「没找到简历」。"""
+        import io as _io
+        from PIL import Image
+
+        d = os.path.join(self.collected, "7.32_暂定")
+        os.makedirs(d)
+        buf = _io.BytesIO()
+        Image.new("RGB", (60, 40), "white").save(buf, format="JPEG")
+        with zipfile.ZipFile(os.path.join(d, "某人_设计师_简历加作品.zip"), "w") as zf:
+            zf.writestr("某人作品包/简历.jpg", buf.getvalue())
+            zf.writestr("某人作品包/作品1.jpg", buf.getvalue())
+
+        stdout_capture = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = stdout_capture
+        try:
+            rc = run_main_capture_exit([d])
+        finally:
+            sys.stdout = old_stdout
+        out = stdout_capture.getvalue()
+        self.assertNotIn("没找到简历", out, f"关键词图片简历应被认作简历成员。\n{out}")
+        self.assertEqual(rc, 0, f"批次应通过（图片简历走提取阻断 warning），exit={rc}\n{out}")
+        self.assertIn("🟢 全过", out)
+
+
+class TestScatterDetectionAllPaths(unittest.TestCase):
+    """2026-09-22 散件检测扩全路径 + 文件名关键词判定（周洁/李阳盲区回归）。"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def _batch(self, name="7.01_1份", tier="待定", team="设计团队", job="交互设计师"):
+        """返回批次目录（闸门 target 口径），文件放档位子目录。"""
+        d = os.path.join(self.tmpdir, "项目", team, job, "已收集简历", name)
+        t = os.path.join(d, tier)
+        os.makedirs(t)
+        return d, t
+
+    def _run(self, d):
+        stdout_capture = io.StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = stdout_capture
+        try:
+            rc = run_main_capture_exit([d])
+        finally:
+            sys.stdout = old_stdout
+        return rc, stdout_capture.getvalue()
+
+    def test_scatter_non_art_path_stops(self):
+        """非美术端路径：同人简历pdf+作品集pdf → STOP（周洁盲区回归）。"""
+        d, t = self._batch()
+        make_text_pdf(os.path.join(t, "周洁_交互设计师_3年.pdf"), "resume text")
+        make_text_pdf(os.path.join(t, "周洁_交互设计师_3年_作品集.pdf"), "portfolio works")
+        rc, out = self._run(d)
+        self.assertEqual(rc, 1, f"非美术端散件必须 STOP。\n{out}")
+        self.assertIn("同人散件未打包", out)
+
+    def test_combo_named_files_exempt(self):
+        """合集命名与作品集并存 → 不触发（李阳形态=打包终态）。"""
+        d, t = self._batch()
+        make_text_pdf(os.path.join(t, "李阳_原画_11年_简历加作品.pdf"), "resume text")
+        make_text_pdf(os.path.join(t, "李阳_原画_11年_作品集.pdf"), "portfolio works")
+        rc, out = self._run(d)
+        self.assertNotEqual(rc, 1, f"合集+作品集并存是合规形态，不应 STOP。\n{out}")
+
+    def test_unnamed_image_work_scatter_stops(self):
+        """简历pdf+无词png → png 是作品类 → STOP（唐儒嵩形态：作品图不一定带作品词）。"""
+        d, t = self._batch()
+        make_text_pdf(os.path.join(t, "王乾_场景_5年.pdf"), "resume text")
+        open(os.path.join(t, "王乾_场景_5年.png"), "wb").close()
+        rc, out = self._run(d)
+        self.assertEqual(rc, 1, f"无词图片默认作品类，与简历并存应 STOP。\n{out}")
+        self.assertIn("同人散件未打包: 王乾", out)
+
+    def test_cross_batch_same_person_warns_not_stops(self):
+        """同人跨批次 → ⚠️ warning，不 STOP（补交归当天批次是合法流程）。"""
+        base = os.path.join(self.tmpdir, "项目", "技术团队", "服务端", "已收集简历")
+        for b, fn in (("8.01_1份", "赵六_服务端_6年.pdf"), ("8.20_1份", "赵六_服务端_6年_作品集.pdf")):
+            d = os.path.join(base, b)
+            os.makedirs(d)
+            make_text_pdf(os.path.join(d, fn), "赵六简历正文")
+        rc, out = self._run(os.path.join(base, "8.01_1份"))
+        self.assertIn("同人跨批次: 赵六", out, f"跨批次应出 warning。\n{out}")
+        self.assertNotEqual(rc, 1, f"跨批次 warning 不应 STOP。\n{out}")
+
+    def test_loose_video_stops(self):
+        """散视频与简历并存 → STOP「视频散件未打包」（2026-09-23 视频打包规则，曾扬形态）。"""
+        d, t = self._batch()
+        make_text_pdf(os.path.join(t, "曾扬_3D动作_2年.pdf"), "resume text")
+        open(os.path.join(t, "冲撞.mp4"), "wb").close()
+        rc, out = self._run(d)
+        self.assertEqual(rc, 1, f"散视频必须 STOP。\n{out}")
+        self.assertIn("视频散件未打包", out)
+
+    def test_video_zip_with_resume_passes(self):
+        """{姓名}_作品视频.zip 与简历并存 → 合规终态，不 STOP（视频包进合集豁免）。"""
+        d, t = self._batch()
+        make_text_pdf(os.path.join(t, "曾扬_3D动作_2年.pdf"), "resume text")
+        with zipfile.ZipFile(os.path.join(t, "曾扬_作品视频.zip"), "w") as z:
+            z.writestr("冲撞.mp4", b"\x00" * 16)
+        rc, out = self._run(d)
+        self.assertNotEqual(rc, 1, f"视频包+简历是合规形态，不应 STOP。\n{out}")
 
 
 if __name__ == "__main__":

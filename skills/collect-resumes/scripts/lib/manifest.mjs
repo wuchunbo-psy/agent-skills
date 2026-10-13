@@ -60,8 +60,25 @@ export function transitionRecord(record, newStatus, context = {}) {
  * 把一条记录推进到 excluded（结构化原因），按状态机合法路径多跳
  * （verified→blocked→needs_resolution→excluded；状态机无 verified→excluded 直达边）。
  * 单一实现：resolve_records --exclude 与下载器的同日冲突自动排除共用。
+ *
+ * 2026-09-20 收口（谢平鑫案例）：重复类排除码（DUPLICATE_* 与 SAMEDAY_* 前缀）必须有内容证据
+ * —— 记录自带 sha256、调用方传 evidence.sha256、或 reaudit 写入的正向 dupe_verified
+ * （method!=='error'）。此前 download 批量前置自愈在下载前按同人同岗直接排除（无 SHA），
+ * 绕过 resolve 层 2026-09-16 护栏；BOSS 分投简历+作品场景=无证据误杀。判重只能由
+ * 下载层拿 SHA 事实判定（9-15 盛明明机制）。
  */
-export function transitionToExcluded(record, code, message) {
+export function transitionToExcluded(record, code, message, evidence = {}) {
+  if (/^(DUPLICATE_|SAMEDAY_)/.test(code)) {
+    const verified = record.dupe_verified && record.dupe_verified.method &&
+      record.dupe_verified.method !== 'error';
+    if (!evidence.sha256 && !record.sha256 && !verified) {
+      throw new Error(
+        `EXCLUDE_NO_EVIDENCE: 重复类排除码 ${code} 要求内容证据` +
+        `（记录 sha256 / evidence.sha256 / 正向 dupe_verified）。` +
+        `从未下载的记录不许打重复码（2026-09-16 用户拍板，2026-09-20 收口到状态机）。`
+      );
+    }
+  }
   let r = record;
   if (r.status === 'verified') {
     r = transitionRecord(r, 'blocked', { code, message: `排除前置（${message}）` });
@@ -73,6 +90,7 @@ export function transitionToExcluded(record, code, message) {
   if (r.status !== 'excluded') {
     throw new Error(`EXCLUDE_UNSUPPORTED: 状态 "${record.status}" 的记录不能排除（终态记录保留历史）`);
   }
+  if (evidence.sha256 && !r.sha256) r = { ...r, sha256: evidence.sha256 };
   return r;
 }
 

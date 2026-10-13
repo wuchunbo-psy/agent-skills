@@ -10,6 +10,11 @@ export const MANIFEST = process.env.MANIFEST_PATH || 'notes/collection_manifest.
 export const SCAN_ALL = process.env.SCAN_ALL_PATH || 'notes/_scan_all.json';
 export const DIAG_DIR = process.env.DIAG_DIR_PATH || 'notes/_scan_diagnostics';
 export const RESULTS_DIR = process.env.RESULTS_DIR_PATH || 'notes/_download_results';
+// 定岗证据源（2026-09-30 防错岗三层防线，spec: docs/superpowers/specs/2026-09-30-archive-job-misplacement-guard-design.md）
+export const SIGNALS = '<PROJECT_ROOT>/notes/_signals.json';
+export const TALENTS_CACHE = '<PROJECT_ROOT>/notes/_talents_cache.json';
+export const JOBS_MAP = '<PROJECT_ROOT>/notes/jobs_map.json';
+export const AUDIT_OUT_DIR = '<PROJECT_ROOT>/notes';
 
 // ---- 归档与下载 ----
 // ⚠️ ARCHIVE_ROOT 与 paths.py:13 的 ARCHIVE_ROOT 必须一致（JS/Python 无法共享文件，靠双向同步）。

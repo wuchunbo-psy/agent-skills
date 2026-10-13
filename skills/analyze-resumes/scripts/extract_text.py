@@ -114,17 +114,19 @@ def extract(path):
     return text, True, None
 
 
-def render_pages(pdf_path, output_dir=None, dpi=RENDER_DPI, max_pages=8):
+def render_pages(pdf_path, output_dir=None, dpi=RENDER_DPI, max_pages=8, combine=2):
     """把 PDF 渲染成 PNG 图片（绕过 BOSS 文本层加密的 fallback）。
 
     返回图片路径列表。output_dir 不传时用临时目录。
-    图片命名：p{页码}.png（1-based）。
+    只渲染前 max_pages 页（默认 8）：加密简历的核心信息在前几页，
+    后面是作品集；需看全页作品集时单独渲染。
 
-    2026-08-14 性能改造：**只渲染前 max_pages 页（默认 8）**——BOSS 加密简历的
-    核心信息（基本信息/求职意向/工作经历）都在前几页，后面几十页是作品集，
-    不需要渲染判断档位。79 页的曹语录作品集从 79 张 200dpi 大图降到 8 张，
-    渲染耗时降 90%+。需要看全页作品集时再单独渲染。
+    combine > 1 时每 combine 页垂直拼接成一张 combined_{n}.png（降低 dpi 到
+    170 保证拼图后可读），返回拼图路径——视觉转录的调用次数从每页一次降
+    到每张拼图一次；tesseract OCR 对长拼图同样适用。
     """
+    if combine and combine > 1:
+        dpi = min(dpi, 170)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
     else:
@@ -133,16 +135,35 @@ def render_pages(pdf_path, output_dir=None, dpi=RENDER_DPI, max_pages=8):
     doc = fitz.open(pdf_path)
     total = len(doc)
     n = min(total, max_pages)
-    paths = []
+    pages = []
     for i in range(n):
         pix = doc[i].get_pixmap(dpi=dpi)
         fp = os.path.join(output_dir, f"p{i+1}.png")
         pix.save(fp)
-        paths.append(fp)
+        pages.append(fp)
     doc.close()
     if total > n:
         print(f"  ⚠️ PDF 共 {total} 页，仅渲染前 {n} 页（作品集部分如需评估单独渲染）", file=sys.stderr)
-    return paths
+
+    if not (combine and combine > 1) or len(pages) <= 1:
+        return pages
+
+    from PIL import Image
+    combined = []
+    for gi in range(0, len(pages), combine):
+        group = pages[gi: gi + combine]
+        imgs = [Image.open(p) for p in group]
+        w = max(im.width for im in imgs)
+        h = sum(im.height for im in imgs)
+        canvas = Image.new("RGB", (w, h), "white")
+        y = 0
+        for im in imgs:
+            canvas.paste(im, (0, y))
+            y += im.height
+        fp = os.path.join(output_dir, f"combined_{gi // combine + 1}.png")
+        canvas.save(fp)
+        combined.append(fp)
+    return combined
 
 
 def extract_recovery(path):

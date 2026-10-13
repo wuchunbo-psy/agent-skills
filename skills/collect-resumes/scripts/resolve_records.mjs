@@ -24,6 +24,7 @@ import {
 import { getArg, isDirectRun } from './lib/cli_helpers.mjs';
 import { mdd, recordDate, parseDateArg, archiveDateSegment } from './lib/dates.mjs';
 import { ARCHIVE_ROOT, MANIFEST as MANIFEST_DEFAULT } from './lib/paths.mjs';
+import { normalizeJobName, checkEvidenceForResolve } from './lib/job_evidence.mjs';
 
 /**
  * 生成日期段名 {M.DD}（如 7.29）。
@@ -82,25 +83,10 @@ export function discoverJobDirs(root) {
 }
 
 /**
- * 岗位名归一化：消解投递标题（BOSS文件名提取）vs 目录名的措辞差异。
- * 三层处理（双向：投递标题和目录名都跑同一函数，命中多个仍判歧义 fail-closed）：
- *   1. 去书写差异：空格/横线/·/—/・（全角半角），消解"AI Native 游戏服务端" vs "AI Native游戏服务端"
- *   2. 去括号后缀：（Go）/（AI-Native方向）/（SDK方向）等技术栈/方向修饰，不是岗位核心名
- *   3. 去开头业务前缀词（循环去，处理"资深游戏"连续前缀）：
- *      游戏=行业前缀；资深/高级/中高级/中级/初级/执行=级别修饰，不影响岗位核心方向
+ * 岗位名归一化已迁至 lib/job_evidence.mjs（2026-09-30：防错岗证据模块需要同一实现，
+ * 此处 re-export 保持既有 import 兼容）。
  */
-function normalizeJobName(s) {
-  let r = (s || '').replace(/[\s\-—·・]/g, '').toLowerCase();
-  // 去括号及内容（全角（）/半角()）
-  r = r.replace(/[（(][^）)]*[）)]/g, '');
-  // 去开头的业务前缀词，循环到无变化（长词放前避免子串吞，如"中高级"在"高级"前）
-  let prev;
-  do {
-    prev = r;
-    r = r.replace(/^(中高级|资深|高级|中级|初级|执行|游戏)/, '');
-  } while (r !== prev);
-  return r;
-}
+export { normalizeJobName };
 
 /**
  * 按岗位名模糊匹配已发现的岗位目录。
@@ -206,7 +192,7 @@ export function resolveRecord(manifest, recordId, name, jobName, filename, jobDi
   // --new-version：duplicate / 重复类 excluded 终态重开（候选人交了更新版简历，走正规归档不走旁路）。
   // excluded 只放行重复类排除码（DUPLICATE_ALREADY_ARCHIVED/SAMEDAY_CONFLICT/DUPLICATE_CANDIDATE），
   // NOT_RESUME 等人工排除不属于"重复投递"语义，不重开。
-  const DUP_REOPEN_CODES = new Set(['DUPLICATE_ALREADY_ARCHIVED', 'SAMEDAY_CONFLICT', 'DUPLICATE_CANDIDATE']);
+  const DUP_REOPEN_CODES = new Set(['DUPLICATE_ALREADY_ARCHIVED', 'SAMEDAY_CONFLICT', 'DUPLICATE_CANDIDATE', 'DUPLICATE_CONTENT']);
   let base = rec;
   if (opts && opts.newVersion) {
     const exCode = rec.exclude_reason && rec.exclude_reason.code;
@@ -259,26 +245,47 @@ export function resolveRecord(manifest, recordId, name, jobName, filename, jobDi
   // 比对前统一取末级名（岗位目录末级 = 岗位名，跨团队同名岗视为同人重复，--new-version 可覆盖）。
   const normJob = (j) => String(j || '').split('/').pop();
   const allRecords = Object.values(manifest.records || {});
-  // 2026-08-25 林秋钰教训：同一封邮件的第二个附件（简历 PDF + 作品 zip）不是重复投递，
-  // 是同批补充材料——message_id 相同的 archived 记录不参与防重（放行后由下载层
-  // "目标存在绝不覆盖" + SHA 校验兜底）；跨邮件/跨天的同名同岗才是真重复投递。
-  const dup = allRecords.some(r =>
+  // 2026-09-15 盛明明事故机制化修复（第4次同类误杀：刘小六08-20/苏树林08-20/林秋钰08-25/盛明明09-15）：
+  // resolve 层没有任何内容判据（邮件附件 API 无 size 无 SHA），跨邮件"同名同岗"判 duplicate
+  // 是瞎猜——BOSS 候选人把简历和作品分两封投（附件名按 BOSS 规则完全相同）必被误杀。
+  // 判重后移到下载层 SHA 事实判定（download_attachment 查同人同岗 twin：SHA 同→DUPLICATE_CONTENT
+  // 排除；SHA 不同→正常归档，同名冲突改名兜住）。此处只警告不拦截。
+  const twinArchived = allRecords.find(r =>
     r.record_id !== recordId &&
     r.candidate_name === name &&
     normJob(r.job_name) === normJob(jobName) &&
-    ['archived', 'validated'].includes(r.status) &&
-    String(r.message_id || '') !== String(base.message_id || '')
+    ['archived', 'validated'].includes(r.status)
   );
-  if (dup && !opts?.newVersion) {
-    // 展开姓名/岗位再转终态：不丢 candidate_name（汇总和后续 --new-version 都要用）
-    const updated = transitionRecord({ ...base, candidate_name: name, job_name: jobName, target_filename: filename }, 'duplicate', {
-      code: 'DUPLICATE_CANDIDATE',
-      message: `候选人"${name}"已在岗位"${jobName}"归档过（重复投递/改简历重投），跳过本次归档。若是更新版简历：--new-version 重开归档`,
-    });
+  if (twinArchived && !opts?.newVersion) {
+    process.stderr.write(
+      `  ⚠️ 同人同岗已有归档（${twinArchived.target_filename || twinArchived.record_id}，收到 ${twinArchived.received_at || '?'}）。` +
+      `放行由下载层按内容 SHA 判重：内容不同=补充材料正常归档，内容相同=真重发自动排除\n`
+    );
+  }
+
+  // 定岗证据交叉（2026-09-30 层②防线，spec: 2026-09-30-archive-job-misplacement-guard-design）：
+  // matchJobDir 唯一命中 ≠ 归对岗——路径前缀会绕过歧义检测（Agent 断言错），裸名唯一命中
+  // 也可能是时序错位（李淑婷模式）。此处用 signals/ATS 反证兜底：有反证才拦（fail-open），
+  // 无证据放行不增加日常摩擦；普通唯一岗不查 ATS（仅撞名群岗位查）。
+  // opts.evidence = {signals, atsJobs} 测试注入（避免读真实 _signals.json）；opts.skipEvidence 全跳过。
+  let evidenceArgs = {};
+  if (opts?.skipEvidence) evidenceArgs = { signals: [], atsJobs: [] };
+  else if (opts?.evidence) evidenceArgs = opts.evidence;
+  const { conflict, crossJobHint } = checkEvidenceForResolve({
+    name, targetJobDir: matched[0].job_dir, jobDirs: dirs,
+    manifestRecords: manifest.records || {},
+    ...evidenceArgs,
+  });
+  if (crossJobHint) {
+    process.stderr.write(`  ⚠️ ${crossJobHint}\n`);
+  }
+  if (conflict) {
+    const updated0 = { ...base, candidate_name: name, job_name: jobName, target_filename: filename };
     return {
-      manifest: upsertRecord(manifest, updated),
-      status: 'duplicate',
-      detail: `候选人"${name}"在岗位"${jobName}"已归档过，跳过（重复投递；更新版用 --new-version）`,
+      manifest: upsertRecord(manifest, updated0),
+      status: 'ambiguous',
+      detail: `⛔ 定岗证据冲突（${conflict.kind === 'ats' ? 'ATS 投递' : '群信号'}）：${conflict.detail}\n` +
+        `目标 ${matched[0].job_dir} 未归档。人工确认归属后重跑 resolve；确认无误可 --skip-evidence 放行`,
     };
   }
 
@@ -479,16 +486,41 @@ export function autoResolve(manifest, opts = {}) {
 function main() {
   const args = process.argv.slice(2);
   const manifestPath = getArg(args, '--manifest') || MANIFEST_DEFAULT;
-  const recordId = getArg(args, '--record');
-  const name = getArg(args, '--name');
-  const jobName = getArg(args, '--job');
-  const filename = getArg(args, '--filename');
-  const date = getArg(args, '--date');
+  // 控制字符清洗（2026-09-11 事故固化：bash read 从 CRLF 清单读参数残留 \r 写进
+  // manifest target_filename，Windows 文件名非法 → 下载全量 ENOENT 且报错引号"消失"。
+  // 防御做在数据入口单点，不靠调用方记得用 newline='\n'。）
+  const sanitize = (v, flag) => {
+    if (v === undefined || v === null) return v;
+    const cleaned = v.replace(/[\x00-\x1f\x7f]/g, '');
+    if (cleaned !== v) {
+      console.error(`⚠️ --${flag} 含控制字符（疑似 CRLF 残留），已清洗: ${JSON.stringify(v)} -> ${JSON.stringify(cleaned)}`);
+    }
+    return cleaned;
+  };
+  const recordId = sanitize(getArg(args, '--record'), 'record');
+  const name = sanitize(getArg(args, '--name'), 'name');
+  const jobName = sanitize(getArg(args, '--job'), 'job');
+  const filename = sanitize(getArg(args, '--filename'), 'filename');
+  const date = sanitize(getArg(args, '--date'), 'date');
   const auto = args.includes('--auto');
   const dryRun = args.includes('--dry-run');
 
   // --exclude：人工排除一条记录（终结 blocked/无法处理的 needs_resolution），
   // 替代手改 manifest JSON。--code 用结构化原因码（见 SKILL.md 约定）。
+  // ⚠️ 2026-09-16 机制化（用户拍板）：重复类排除码对"从未下载（无 sha256）"的记录一律拒绝。
+  // BOSS 附件元数据文件名按职位模板生成，简历/作品集可完全同名——"同文件名"大概率是
+  // 简历+作品两份材料而非重发（林彩华/韩文帝/谢廷三起误杀根源）。判重只能由下载层按
+  // 内容 SHA 判定；历史误杀用 reaudit_duplicates.mjs 重审。
+  const DUP_EXCLUDE_RE = /^(DUPLICATE|SAMEDAY)/;
+  const refuseUnverifiedDup = (rec, code) => {
+    if (DUP_EXCLUDE_RE.test(code) && !rec.sha256) {
+      console.error(`🔴 拒绝排除 ${rec.record_id.slice(0, 30)}…：重复类排除码（${code}）要求记录已有下载内容证据（sha256 字段）。`);
+      console.error('   该记录从未下载过——按文件名判"重复"没有内容判据，BOSS 同名附件大概率是简历+作品两份材料。');
+      console.error('   正确路径：a) collect 正常流程让下载层按 SHA 判重；b) 历史排除重审：node reaudit_duplicates.mjs');
+      return true;
+    }
+    return false;
+  };
   const excludeId = getArg(args, '--exclude');
   if (excludeId) {
     const code = getArg(args, '--code');
@@ -504,6 +536,7 @@ function main() {
       console.error(`🔴 记录不存在: ${excludeId}`);
       process.exit(2);
     }
+    if (refuseUnverifiedDup(rec, code)) process.exit(2);
     try {
       const updated = transitionToExcluded(rec, code, note);
       writeManifestAtomic(manifestPath, upsertRecord(manifest, updated));
@@ -535,6 +568,10 @@ function main() {
       process.exit(2);
     }
     for (const rec of targets) {
+      if (refuseUnverifiedDup(rec, code)) {
+        console.error(`⚠️ 跳过 ${rec.record_id.slice(0, 20)}: 未下载记录不接受重复类排除码（重审用 reaudit_duplicates.mjs）`);
+        continue;
+      }
       try {
         const updated = transitionToExcluded(rec, code, note);
         manifest.records[updated.record_id] = updated;
@@ -599,7 +636,11 @@ function main() {
       console.log(`   若本次是跨邮件同人重复件 → 改用 --exclude 排除或直接停；若是更新版简历 → 加 --new-version 重开归档。`);
     }
   }
-  const result = resolveRecord(manifest, recordId, name, jobName, filename, undefined, { date, newVersion: args.includes('--new-version') });
+  const result = resolveRecord(manifest, recordId, name, jobName, filename, undefined, {
+    date,
+    newVersion: args.includes('--new-version'),
+    skipEvidence: args.includes('--skip-evidence'),
+  });
   writeManifestAtomic(manifestPath, result.manifest);
 
   if (result.status === 'resolved') {

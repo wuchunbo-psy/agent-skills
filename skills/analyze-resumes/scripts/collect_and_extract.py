@@ -2,19 +2,16 @@
 """扫描指定日期的归档目录，自动发现所有简历文件（含 zip/rar 包内简历），
 逐个提取文本，输出结构化清单。
 
-解决的核心问题（2026-08-06 铁律）：
-  赵一博的简历 PDF 打包在 zip 里（和 mp4 作品一起），手动列文件时把整个 zip
-  当"作品集"跳过，导致评估报告漏人。本脚本程序化扫描+解压，不靠人列清单。
-
 用法：
   python collect_and_extract.py --date 8.05 [--archive-root <path>] [--output-dir <path>]
+  多日期一次跑（OCR/渲染模型只加载一次）：--date 8.24 --date 8.25
 
 输出：
   1. 每份简历的文本 JSON 到 --output-dir（{姓名}.json）
   2. stdout 输出清单（Markdown 表格），含每个候选人的提取状态
 
 扫描规则：
-  - 遍历 {archive-root}/**/{M.DD}_*份/ 下所有文件（含档位子目录：强推/可推/待定·不推）
+  - 遍历 {archive-root}/**/{M.DD}_*份/ 和 {M.DD}_*暂定/ 下所有文件（含档位子目录：强推/可推/待定/不推；历史批次或为共置目录 待定·不推）
   - PDF/DOCX/DOC → 直接提取
   - ZIP/RAR → 解压，在包内找简历文件（PDF/DOCX，文件名含"简历""resume"优先）
   - 文件名含"作品集""portfolio"的独立文件 → 跳过（但 zip 打包件不跳过，要查内部）
@@ -22,8 +19,7 @@
 
 依赖：
   - PyMuPDF (fitz)：PDF 提取
-  - 7-Zip：解压 RAR（路径见 paths.py SEVEN_ZIP）
-  - python-docx：DOCX 备选（fitz 优先）
+  - 7-Zip：解压 RAR（路径见 SEVEN_ZIP）
 """
 import argparse
 import json
@@ -80,8 +76,7 @@ def _zip_decode_name(info):
 def find_date_dirs(archive_root, date_prefix):
     """找到所有 {date_prefix}_*份 和 {date_prefix}_暂定 目录（含档位子目录）。
 
-    也扫 _暂定：resolve 后、闸门 rename 前的简历在 _暂定 里，
-    不扫会漏人（2026-08-13 林先生案例：在 _暂定 时 collect 没扫到）。
+    也扫 _暂定：resolve 后、闸门 rename 前的简历在 _暂定 里，不扫会漏人。
     """
     results = []
     for root, dirs, files in os.walk(archive_root):
@@ -99,7 +94,6 @@ def is_resume_file(filename):
     name_lower = filename.lower()
     # 文件名含"简历"（含"简历加作品/简历和作品集"等）→ 视为简历文件
     # 否则含作品关键词（xxx_作品集.pdf）→ 跳过
-    # 2026-08-17 谢平鑫 case：_简历加作品.pdf 被"作品"关键词误跳过，漏评估
     if "简历" in name_lower:
         return True
     if any(kw in name_lower for kw in PORTFOLIO_KEYWORDS):
@@ -164,7 +158,6 @@ def extract_resume_text(filepath):
         text, is_valid, issue = extract_pdf(filepath)
         render = None
         # 提取失败/无效 → 自动渲染图片（不依赖 issue 关键词，任何失败都渲染兜底）
-        # 2026-08-13 教训：issue=None 但 is_valid 不为 True 时也要渲染（林先生案例）
         if not is_valid or len(text.strip()) < 50:
             try:
                 render = render_pages(filepath)
@@ -182,15 +175,12 @@ def extract_resume_text(filepath):
 
 
 def reuse_previous_transcription(json_path, text, is_valid, render):
-    """已有视觉转录则复用，不重复渲染、不覆盖（2026-09-03 固化进脚本，不靠记忆）。
+    """已有视觉转录则复用，不重复渲染、不覆盖（约束进脚本，不靠记忆）。
 
     BOSS 加密/扫描型 PDF 的既定流程：脚本渲染图片 → 主会话视觉读 → 人工写回
-    JSON 的 text 字段。重跑时脚本不知道 text 已是人工转录产物，会重新渲染并
-    把转录覆盖掉（2026-09-02 曾华强案例：归档 peek 已转录，提取又渲染一遍）。
-
-    规则：本次提取不可读（text 层仍乱码/为空）而现有 JSON 里有非空 text 时，
-    判定其为人工转录 → 复用并打 text_source=vision 标记；本次可读则以本次为准。
-    返回 (text, is_valid, render, reused)。
+    JSON 的 text 字段。重跑时若本次提取不可读（text 层仍乱码/为空）而现有 JSON
+    里有非空 text，判定其为人工转录 → 复用并打 text_source=vision 标记；
+    本次可读则以本次为准。返回 (text, is_valid, render, reused)。
     """
     if is_valid and text.strip():
         return text, is_valid, render, False
@@ -224,16 +214,69 @@ def parse_name_from_dir(date_dir):
     return studio, job_name
 
 
-def _run_date(args, date_prefix, output_dir):
-    """处理单个日期段：扫描→解压→提取→清单。
+def _record_candidate(candidates, output_dir, name_base, studio, job,
+                      status, issue, text, source, render=None, reused=False):
+    """记录单个候选人（按 姓名+岗位 去重，首个结果为准）；有文本时落 JSON。"""
+    key = f"{name_base}_{job}"
+    if key in candidates:
+        return
+    candidates[key] = {
+        "name": name_base, "studio": studio, "job": job,
+        "status": status, "issue": issue, "text_len": len(text),
+        "source": source, "text": text, "render_pages": render,
+    }
+    if text or render:
+        json_path = os.path.join(output_dir, f"{name_base}.json")
+        out = {"text": text, "is_valid": bool(text), "issue": issue}
+        if reused:
+            out["text_source"] = "vision"
+        if render:
+            out["render_pages"] = render
+            out["render_fallback"] = True
+        with open(json_path, "w", encoding="utf-8") as jf:
+            json.dump(out, jf, ensure_ascii=False)
 
-    多日期经 main 循环调用本函数——OCR/渲染模型在进程内只初始化一次，
-    这是 2026-08-25 提速改造的核心（此前每日期一次进程，easyocr 重复加载 30-60s/次）。
+
+def _extract_task(kind, filepath, filename, name_base, output_dir):
+    """单文件提取任务（线程池内执行）。返回装配所需字段元组。"""
+    json_path = os.path.join(output_dir, f"{name_base}.json")
+    if kind == "archive":
+        tmpdir = tempfile.mkdtemp(prefix="_extract_archive_")
+        try:
+            resumes, _ = find_resume_in_archive(filepath, tmpdir)
+            if not resumes:
+                return ("纯作品集", "🎨纯作品集(无简历)",
+                        "zip/rar 内无简历文件，需看作品集原件", "", filename, None, False)
+            resumes.sort(key=lambda x: 0 if x[0] == "resume" else 1)
+            _, resume_path, resume_name = resumes[0]
+            text, is_valid, issue, render = extract_resume_text(resume_path)
+            _, _, render, reused = reuse_previous_transcription(json_path, text, is_valid, render)
+            status = ("✅已提取(zip内,复用视觉转录)" if reused
+                      else "✅已提取(zip内)" if is_valid
+                      else ("🖼️BOSS加密(zip内,已渲染图片)" if render else "⚪图片型/异常(zip内)"))
+            return ("resume", status, issue, text if is_valid else "",
+                    f"{filename} → {resume_name}", render, reused)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+    text, is_valid, issue, render = extract_resume_text(filepath)
+    _, _, render, reused = reuse_previous_transcription(json_path, text, is_valid, render)
+    status = ("✅已提取(复用视觉转录)" if reused
+              else "✅已提取" if is_valid
+              else ("🖼️BOSS加密(已渲染图片)" if render else "⚪图片型/异常"))
+    return ("resume", status, issue, text if is_valid else "", filename, render, reused)
+
+
+def _run_date(args, date_prefix, output_dir):
+    """处理单个日期段：扫描 → 并行提取 → 装配清单。
+
+    提取（fitz/7z/渲染）走 ThreadPoolExecutor；装配串行保序。
+    多日期经 main 循环调用本函数——模型在进程内只初始化一次。
     """
+    import time
+    t0 = time.time()
     archive_root = args.archive_root
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. 扫描日期目录
     date_dirs = find_date_dirs(archive_root, date_prefix)
     if not date_dirs:
         print(f"❌ 未找到 {date_prefix}_*份 目录")
@@ -244,119 +287,53 @@ def _run_date(args, date_prefix, output_dir):
         print(f"   {d.replace(archive_root + '/', '')}")
     print()
 
-    # 2. 遍历每个目录下的文件
-    results = []  # [{name, studio, job, status, issue, text_len, source}]
-    candidates = {}  # name → info（去重：同人取简历，作品集不重复计）
-
+    # 1. 收集任务（不提取，先分类）
+    tasks = []  # (kind, filepath, filename, name_base, studio, job)
     for date_dir in date_dirs:
         studio, job = parse_name_from_dir(date_dir)
-        # 遍历含档位子目录
         for root, dirs, files in os.walk(date_dir):
             for f in sorted(files):
                 filepath = os.path.join(root, f)
                 ext = os.path.splitext(f)[1].lower()
-
-                # 从文件名解析候选人姓名（取第一个 _ 前的部分）
                 name_base = f.split("_")[0] if "_" in f else os.path.splitext(f)[0]
-
-                if ext in RESUME_EXTS:
-                    # 独立简历文件
-                    if is_resume_file(f):
-                        text, is_valid, issue, render = extract_resume_text(filepath)
-                        json_path = os.path.join(output_dir, f"{name_base}.json")
-                        text, is_valid, render, reused = reuse_previous_transcription(json_path, text, is_valid, render)
-                        # BOSS 加密文本层：渲染了图片，status 标注提示用视觉识别
-                        status = ("✅已提取(复用视觉转录)" if reused
-                                  else "✅已提取" if is_valid
-                                  else ("🖼️BOSS加密(已渲染图片)" if render else "⚪图片型/异常"))
-                        key = f"{name_base}_{job}"
-                        if key not in candidates:
-                            candidates[key] = {
-                                "name": name_base, "studio": studio, "job": job,
-                                "status": status,
-                                "issue": issue, "text_len": len(text),
-                                "source": f, "text": text if is_valid else "",
-                                "render_pages": render,
-                            }
-                            # 保存 JSON
-                            with open(json_path, "w", encoding="utf-8") as jf:
-                                out = {"text": text, "is_valid": is_valid, "issue": issue}
-                                if reused:
-                                    out["text_source"] = "vision"
-                                if render:
-                                    out["render_pages"] = render
-                                    out["render_fallback"] = True
-                                json.dump(out, jf, ensure_ascii=False)
-                    # 独立作品集文件 → 跳过（不计入）
-                    continue
-
+                if ext in RESUME_EXTS and is_resume_file(f):
+                    tasks.append(("resume", filepath, f, name_base, studio, job))
                 elif ext in ARCHIVE_EXTS:
-                    # zip/rar → 解压找简历
-                    tmpdir = tempfile.mkdtemp(prefix="_extract_archive_")
-                    try:
-                        resumes, all_members = find_resume_in_archive(filepath, tmpdir)
-                        if resumes:
-                            # 优先取 "resume" 类型，其次 "maybe"
-                            resumes.sort(key=lambda x: 0 if x[0] == "resume" else 1)
-                            resume_type, resume_path, resume_name = resumes[0]
-                            text, is_valid, issue, render = extract_resume_text(resume_path)
-                            json_path = os.path.join(output_dir, f"{name_base}.json")
-                            text, is_valid, render, reused = reuse_previous_transcription(json_path, text, is_valid, render)
-                            status = ("✅已提取(zip内,复用视觉转录)" if reused
-                                      else "✅已提取(zip内)" if is_valid
-                                      else ("🖼️BOSS加密(zip内,已渲染图片)" if render else "⚪图片型/异常(zip内)"))
-                            key = f"{name_base}_{job}"
-                            if key not in candidates:
-                                candidates[key] = {
-                                    "name": name_base, "studio": studio, "job": job,
-                                    "status": status,
-                                    "issue": issue, "text_len": len(text),
-                                    "source": f"{f} → {resume_name}",
-                                    "text": text if is_valid else "",
-                                    "render_pages": render,
-                                }
-                                with open(json_path, "w", encoding="utf-8") as jf:
-                                    out = {"text": text, "is_valid": is_valid, "issue": issue}
-                                    if reused:
-                                        out["text_source"] = "vision"
-                                    if render:
-                                        out["render_pages"] = render
-                                        out["render_fallback"] = True
-                                    json.dump(out, jf, ensure_ascii=False)
-                        else:
-                            # 包内无简历 → 纯作品集
-                            key = f"{name_base}_{job}"
-                            if key not in candidates:
-                                candidates[key] = {
-                                    "name": name_base, "studio": studio, "job": job,
-                                    "status": "🎨纯作品集(无简历)",
-                                    "issue": "zip/rar 内无简历文件，需看作品集原件",
-                                    "text_len": 0, "source": f, "text": "",
-                                }
-                    finally:
-                        shutil.rmtree(tmpdir, ignore_errors=True)
-
+                    tasks.append(("archive", filepath, f, name_base, studio, job))
                 elif ext in IMAGE_EXTS:
-                    # 图片简历 → 标记
-                    key = f"{name_base}_{job}"
-                    if key not in candidates:
-                        candidates[key] = {
-                            "name": name_base, "studio": studio, "job": job,
-                            "status": "⚪图片型",
-                            "issue": f"图片格式({ext})，需人工看原件",
-                            "text_len": 0, "source": f, "text": "",
-                        }
+                    tasks.append(("image", filepath, f, name_base, studio, job))
 
-    # 3. 输出清单
+    candidates = {}
+    for kind, filepath, f, name_base, studio, job in tasks:
+        if kind == "image":
+            _record_candidate(candidates, output_dir, name_base, studio, job,
+                              "⚪图片型", f"图片格式({os.path.splitext(f)[1].lower()})，需人工看原件", "", f)
+    heavy = [t for t in tasks if t[0] in ("resume", "archive")]
+
+    # 2. 并行提取
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        results = list(ex.map(lambda t: _extract_task(t[0], t[1], t[2], t[3], output_dir), heavy))
+
+    # 3. 串行装配（保序）
+    for (kind, filepath, f, name_base, studio, job), (rtype, status, issue, text, source, render, reused) in zip(heavy, results):
+        _record_candidate(candidates, output_dir, name_base, studio, job,
+                          status, issue, text, source, render=render, reused=reused)
+
+    print(f"⏱️ 提取耗时 {time.time() - t0:.1f}s（{len(tasks)} 件，4 线程）")
+    _print_manifest(candidates, output_dir)
+
+
+def _print_manifest(candidates, output_dir):
+    """输出清单表 + 汇总 + 需人工介入的强制提醒。"""
     results = sorted(candidates.values(), key=lambda x: (x["studio"], x["job"], x["name"]))
 
     print(f"📊 共发现 {len(results)} 位候选人：\n")
-    print(f"| 姓名 | 工作室 | 岗位 | 状态 | 文本长度 | 来源 |")
-    print(f"|------|--------|------|------|---------|------|")
+    print("| 姓名 | 工作室 | 岗位 | 状态 | 文本长度 | 来源 |")
+    print("|------|--------|------|------|---------|------|")
     for r in results:
         print(f"| {r['name']} | {r['studio']} | {r['job']} | {r['status']} | {r['text_len']} | {r['source'][:40]} |")
 
-    # 汇总
     extracted = [r for r in results if "已提取" in r["status"]]
     image_type = [r for r in results if "图片型" in r["status"]]
     portfolio_only = [r for r in results if "纯作品集" in r["status"]]
@@ -369,10 +346,9 @@ def _run_date(args, date_prefix, output_dir):
     if portfolio_only:
         print(f"⚠️ 纯作品集无简历：{', '.join(r['name'] for r in portfolio_only)}")
 
-    # 加密PDF已渲染图片 → 强制提醒用视觉模型读（不靠记忆，2026-08-13 教训）
     render_candidates = [r for r in results if r.get("render_pages")]
     if render_candidates:
-        print(f"\n🚨 {len(render_candidates)} 人是加密PDF已渲染图片，必须用视觉模型(analyze_image)读 render_pages 后写回 JSON text 字段，否则无法评估：")
+        print(f"\n🚨 {len(render_candidates)} 人是加密PDF已渲染图片，必须用视觉模型读 render_pages 后写回 JSON text 字段，否则无法评估：")
         for r in render_candidates:
             pages = r.get("render_pages", [])
             print(f"  → {r['name']}（{r['job']}）: 渲染前 {len(pages)} 页（作品集超长页截断，核心信息在前几页）→ {output_dir}/{r['name']}.json 的 render_pages 字段")

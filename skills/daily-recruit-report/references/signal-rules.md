@@ -32,6 +32,8 @@
 
 **判读结果落盘（step 3.5）**：自检全过后用 `signals.py --set` 写入 `notes/_signals.json`（不是口头呈现在作战清单里就完了）。这是 candidate-nurture 交叉比对的数据源——不落盘 nurture 读不到意图。Agent 只产出「姓名+type+source+evidence+time+ats_landed+note」写进临时 JSON，talent_id 由工具从 `_daily_review.json` 自动匹配（同名多档案时可在输入里显式传 `talent_id` 指定）。格式见 [`candidate-nurture/references/signals-contract.md`](../../candidate-nurture/references/signals-contract.md)。
 
+**落盘机械自检（喂 --set 之前必跑）**：临时 JSON 写完后先 `python -m json.tool <临时文件> > /dev/null && echo OK` 校验合法性。evidence 摘原话一律用「」包引语，不把 ASCII 双引号嵌进字符串（JSON 串内嵌 `"` 必须转义，手写必翻车）；原话里含引号时截取时避开或换成「」。格式翻车浪费的是整轮判读后的重试时间。
+
 **用户决策落盘（step 4.5）**：用户审查后，Agent 用 `signals.py --decide` 落盘 `decisions` 部分。candidate-nurture 读 decisions 过滤——用户已决定"今天约"的不重复提醒，决定"终止"的不再保温。不落盘 = nurture 和早晨作战清单两张皮。
 
 ---

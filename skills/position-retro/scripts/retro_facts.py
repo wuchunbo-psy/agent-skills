@@ -20,6 +20,8 @@ def strip_game_prefix(s: str) -> str:
 
 def position_matches(hint: str, target: str) -> bool:
     h, t = strip_game_prefix(hint or ""), strip_game_prefix(target or "")
+    # ATS 标题与归档目录名空格不一致（如"AI Native 游戏"vs"AI Native游戏"），匹配前归一化空白
+    h, t = re.sub(r"\s+", "", h), re.sub(r"\s+", "", t)
     return bool(h) and bool(t) and (h in t or t in h)
 
 POSITION_RE = re.compile(

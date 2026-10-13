@@ -35,6 +35,34 @@ node "…/scripts/batch_download_links.mjs" --urls "https://wx.mail.qq.com/..." 
 - 快速失败：download 事件等 15 秒（需登录的页面按钮无效→跳过），传输超时 5 分钟
 - 依赖 `playwright` npm 包（装在 `<PROJECT_ROOT>/node_modules`，脚本自动 fallback 加载）
 
+### ⚠️ QQ 超大附件（wx.mail.qq.com/ftn）no_button：SPA 渲染慢导致按钮落空（脚本已修），临时脚本备用
+
+2026-09-11 三连实测（85/67/843MB）+ 复盘：**根因不是按钮选择器**（脚本本就有 `text="下载"`），是 QQ 云盘分享页 SPA 按钮渲染要 **5-6 秒**，脚本只等 2 秒——所有选择器在渲染完成前轮询，全部落空报 no_button。有头/无头重跑都无效（不是风控，别浪费时间重试）。
+
+**已修复（2026-09-12）**：`batch_download_links.mjs` 等待 2s→5s + 按钮查找失败后等 3s 重试一轮；同链接实测 no_button→一次成功。**先直接重跑脚本**，脚本修不好再往下走临时脚本。
+
+备用临时脚本（脚本对页面改版失效时才用；`text="下载"` **带引号精确匹配**——不带引号会误点「登录QQ邮箱」；`waitForEvent('download')` 阻塞等）：
+
+```js
+const { chromium } = require('playwright');
+(async () => {
+  const url = process.argv[2];
+  const browser = await chromium.launch({ headless: true });
+  const page = await (await browser.newContext({ acceptDownloads: true })).newPage();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.waitForTimeout(5000);
+    await page.locator('text="下载"').first().click({ timeout: 10000 });
+    const download = await page.waitForEvent('download', { timeout: 180000 });
+    await download.saveAs('Downloads 目录/' + download.suggestedFilename(), { timeout: 600000 });
+    console.log('DOWNLOAD_OK');
+  } catch (e) { console.log('ERR', e.message); } finally { await browser.close(); }
+})();
+// 跑法: NODE_PATH=<PROJECT_ROOT>/node_modules node 脚本.js "<url>"
+```
+
+下完同 163：走「用户手动下载归档」三步走（或 resolve 后重跑 `batch_download_links --records`，脚本发现 Downloads 同名同大小文件直接复用归档，无需手写 result.json——2026-09-11 实测有效）。⚠️ **链接类记录 original_filename 为空时 Downloads 复用必不触发**（复用按 original_filename+大小匹配）——此时直接手动三步，别先试浏览器。
+
 ### ⚠️ 163 超大附件（mail.163.com/large-attachment）：batch_download_links 必失败，走长等待脚本
 
 2026-09-08 高阳 66.6MB 实测：163「普通下载」点击后有**等待倒计时，40s+ 才触发 download 事件**，batch_download_links 固定等 15s → headless/有头都必 timeout。链接本身 HTTP 200 未失效（页面显示文件名/大小/剩余有效期，无需登录）。

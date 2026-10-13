@@ -150,6 +150,44 @@ MSYS_NO_PATHCONV=1 lark-cli api GET /open-apis/hire/v1/jobs \
 
 ## Interview / 面评
 
+### 创建面试安排（2026-09-18 灰度打通）— POST /open-apis/hire/v1/interview-arrangements
+
+租户灰度「【OpenAPI】创建面试」（09-18 15:04 开通）。**路径是连字符 `interview-arrangements`**——探路由别再用下划线/复数变体（此前六次 404 全因写法）。文档标注「仅部分企业可见」，公开 llms 索引/SDK 均无，须灰度租户登录账号在文档站看。权限=`hire:interview`（更新面试信息，应用已开通），仅自建应用，20 次/秒。空 body 实测返回 `99992402 field validation`（列出必填字段）=路由通+权限过的判别信号。
+
+**查询参数**：`user_id_type=open_id`（联系人/面试官/抄送均传 open_id）。
+
+**body 契约**（09-18 从灰度文档逐字段核出）：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| application_id | string | 是 | 投递 ID |
+| stage_id | string | 是 | 投递阶段 ID，须属于该投递当前招聘流程 |
+| interview_mode | int | 是 | 1现场/2视频/3电话；2 须填 talent_interview_date 和 video |
+| candidate_time_zone | string | 是 | 如 `"Asia/Shanghai"` |
+| talent_interview_date | string | 是 | yyyy-MM-dd（按候选人时区） |
+| contact_user_id | string | 是 | 面试联系人 user_id（open_id） |
+| contact_mobile / contact_email | string | 否 | 手机号部分租户配置下必填 |
+| address_id | string | 否 | mode=1 时必填，来源「获取地点列表」usage=interview_location |
+| rounds[] | list | 是 | 1~50 轮 |
+| rounds[].begin_time / end_time | int | 是 | 毫秒时间戳 |
+| rounds[].interviewer_user_ids | string[] | 是 | 面试官 open_id 列表 |
+| rounds[].round_type_id / feedback_form_id | string | 否 | 成对提供或同时留空 |
+| video.video_type | int | 否 | mode=2 时填：5=飞书（默认）/9=飞书含代码考核/100=不用系统视频工具 |
+| notify_candidate | bool | 否 | 默认 true；true 必传 candidate_notification_template_id |
+| notify_interviewer | bool | 否 | **当前版本必须 true，面试官日历通知关不掉** |
+| cc_user_ids | string[] | 否 | 抄送人 open_id，≤50 |
+| remark | string | 否 | ≤2000 字 |
+| candidate_notification_template_id | string | 条件 | notify_candidate=true 时必填，来源下方模板接口 |
+
+**配套接口**：`GET /open-apis/hire/v1/interview_notification_templates?interview_mode=2`（09-18 实测 code=0；视频面 2 个模板 `7376510670734852097`/`7376503296516096028`，mode=1 现场 2 个）。同族 `interview_arrangement/cancel|patch|get`（取消/更新/详情）路径未探，用前从对应灰度文档页核实。
+
+**安全**：真实创建即发通知（面试官日历邀请强制、候选人邮件默认）；无 dry-run，AI 不得未经用户确认对真实投递创建。
+**⚠️ 09-18 灰度首日实测**：必填全满足后 CREATE 恒 1002002（无字段明细，官方调试台同拒）；已排除 stage 两值/通知组合/contact_mobile/时间戳类型/video 结构/cc/模板选择。同族 GET 正常（假 id 返 1002804）——疑灰度租户侧未完全生效或有文档未写附加条件，复测有效前勿重复排查，直接用最新 log_id 找飞书顾问。
+
+**⚠️ 10-13 复测（CLI 已升 1.0.97 后，探针法）**：假 app_id→`1002201`、真 app 假 stage→`1002002` 无明细，行为与 09-18/09-23 仍完全一致，服务端未解锁。新 log_id：`20261013104524A556F58D83C962848126`（假 app）/ `202610131045251409D2CB2C57FD8902EB`（真 app 假 stage），探针脚本 `notes/_archive/_probe_interview_api_1013.py`。解锁唯一判据=真参数建场 code=0（即下一个真实待建场抢在手建前试 API，跑前查 `hire_list_interviews` 防重复）。
+
+**⚠️ 09-23 复测（15:41-15:53，探针法）**：行为与 09-18 完全一致，仍未修好。新增证据链：①假 application_id（其余全真）→ `1002201 application not exist` = 请求确实进入创建面试业务逻辑，路由/鉴权/分发全通，非资格或权限问题；②真 application_id+假 stage_id → `1002002` 无明细 = stage 归属等校验失败统一落无明细兜底码；③真参数 → `1002002` 同 09-18。判读：卡点在飞书侧校验配置或文档未写必填项，本地排查无解。**复测法 = 假 app_id 探针（零副作用，返 1002201 即路由仍通）**；勿对已有面试的投递重发真参数（重复建场风险，牛海涛 09-23 即先例：真参数 1002002 实为该投递 17:00 场已存在）。待飞书顾问查 log_id：`20260923154124F6DA5D3E952C39162357`（真参数）/ `20260923155236BA14EFA1DB82C437519A`（假 app_id）/ `2026092315533461EA67E95ED5B2222DFE`（真 app 假 stage）。
+
 ### GET /open-apis/hire/v1/interviews
 
 列面试（含面评结论）。`application_id` / `interview_id` / `start_time` / `end_time`(毫秒) 四个过滤参数不许同时为空，`page_size≤100`，默认 `user_id_type=open_id`（`interview_record_list[].interviewer.id` 即 open_id）。
