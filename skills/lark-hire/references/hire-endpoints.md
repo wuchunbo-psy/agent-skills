@@ -144,9 +144,9 @@ MSYS_NO_PATHCONV=1 lark-cli api GET /open-apis/hire/v1/jobs \
 
 **必填**：`title` / `job_managers{recruiter_id, hiring_manager_id_list}`（open_id）/ `job_process_id` / `process_type`(1社招) / `department_id` / `is_never_expired` / `job_type_id` / `recruitment_type_id`("101"全职)。常用可选：`min_salary`/`max_salary`（单位 K，15=15K）、`description`(职责)、`requirement`(要求+加分)、`experience`(1不限~8十年以上)。
 
-**配置值抄现有岗位**（2026-09-09 快照）：项目A项目团队 dept=`od-dde8d245c235e75b4df01fe76b6eebc5`、默认社招流程=`7376529083536230683`、职位类别(互联网/电子/网游)=`6791698585114724616`、全职=`101`、城市=深圳 CT_128。现役岗位经验/学历/薪资多留空，别乱填。
+**配置值抄现有岗位**（2026-09-09 快照）：坤灵项目团队 dept=`od-dde8d245c235e75b4df01fe76b6eebc5`、默认社招流程=`7376529083536230683`、职位类别(互联网/电子/网游)=`6791698585114724616`、全职=`101`、城市=深圳 CT_128。现役岗位经验/学历/薪资多留空，别乱填。
 
-**建岗脚本先例**：`notes/_art_jobs_create.py`（5 个美术岗，开关打开后直接跑）。
+**建岗脚本先例**：`notes/_kunling_art_jobs_create.py`（5 个美术岗，开关打开后直接跑）。
 
 ## Interview / 面评
 

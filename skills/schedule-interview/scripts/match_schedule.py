@@ -1667,6 +1667,26 @@ def main():
     no_go = [l for l in lines_result if "❌" in l]
     out.extend(no_go if no_go else ["（无）"])
 
+    # —— 候选人链接（2026-10-14：飞书招聘人才页直达；用户转面试官看简历/手建面试用。
+    #     排版用户定稿：姓名行+纯链接行，顶格独占一行——整行选中复制即得干净 URL，
+    #     转 IM 按 AGENTS 飞书铁律单独一条消息发纯链接才保可点）
+    out.append("")
+    out.append("=== 候选人链接（每人两行：姓名+纯链接，整行复制；发面试官单独一条消息发）===")
+    seen_links = set()
+    for c in candidates:
+        tid = c.get("talent_id") or (c.get("ats") or {}).get("talent_id", "")
+        if not tid:
+            continue
+        app_id = (c.get("ats") or {}).get("application_id") or ""
+        key = (c["name"], tid, app_id)
+        if key in seen_links:  # 同名多条目窗口（复杂窗口写法）会重复进 candidates，链接只留一条
+            continue
+        seen_links.add(key)
+        url = f"https://mini1.feishu.cn/hire/talent/{tid}" + (f"?application_id={app_id}" if app_id else "")
+        out.append(c["name"])
+        out.append(url)
+        out.append("")
+
     text = "\n".join(out)
     print("\n" + text)
     print(f"\n[✅ 完成]（stdout 直出，不再写文件）")

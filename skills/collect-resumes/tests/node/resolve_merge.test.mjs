@@ -22,7 +22,7 @@ const FIXTURE_DIR = ARCHIVE_ROOT + '/_test_fixture_' + Date.now();
 
 function makeTmpArchiveFixture() {
   // 在 ARCHIVE_ROOT 下造岗位目录 + 已收集简历
-  const collected = FIXTURE_DIR + '/项目C/美术端/特效设计师/已收集简历';
+  const collected = FIXTURE_DIR + '/山海弹珠项目/美术端/特效设计师/已收集简历';
   fs.mkdirSync(collected, { recursive: true });
   return { collected };
 }
@@ -34,7 +34,7 @@ after(() => {
 
 test('resolve: unique job resolves to verified with target path in _暂定 subdir', () => {
   const { collected } = makeTmpArchiveFixture();
-  const jobDirs = [{ job_dir: '项目C/美术端/特效设计师', collected_dir: collected.replace(/\\/g, '/') }];
+  const jobDirs = [{ job_dir: '山海弹珠项目/美术端/特效设计师', collected_dir: collected.replace(/\\/g, '/') }];
   const rec = { record_id: 'r1', message_id: 'm1', attachment_id: 'a1', status: 'needs_resolution', errors: [], source_type: 'mail_attachment' };
   const manifest = makeManifestWithRecord(rec);
   // 注入临时 jobDirs + date，避免触碰真实归档和依赖今天日期
@@ -52,7 +52,7 @@ test('resolve: unique job resolves to verified with target path in _暂定 subdi
 
 test('resolve: 目录日期段默认=记录邮件收到日（历史积压不混进操作日目录）', () => {
   const { collected } = makeTmpArchiveFixture();
-  const jobDirs = [{ job_dir: '项目C/美术端/特效设计师', collected_dir: collected.replace(/\\/g, '/') }];
+  const jobDirs = [{ job_dir: '山海弹珠项目/美术端/特效设计师', collected_dir: collected.replace(/\\/g, '/') }];
   // received_at=2020-01-02（久远日期，确保≠运行日），created_at=今天：
   // 旧实现默认目录日期段=操作日（今天），历史邮件会混进今日目录
   const rec = {
@@ -69,8 +69,8 @@ test('resolve: 目录日期段默认=记录邮件收到日（历史积压不混�
 test('resolve: ambiguous Unity stays needs_resolution', () => {
   // 歧义测试不触发 mkdir（保持 needs_resolution），可用任意 collected_dir
   const jobDirs = [
-    { job_dir: '项目B工作室/技术端/Unity客户端开发工程师', collected_dir: 'F:/tmp/a/已收集简历' },
-    { job_dir: '项目C/技术端/Unity客户端开发工程师（AI-Native方向）', collected_dir: 'F:/tmp/b/已收集简历' },
+    { job_dir: '长青工作室/技术端/Unity客户端开发工程师', collected_dir: 'F:/tmp/a/已收集简历' },
+    { job_dir: '山海弹珠项目/技术端/Unity客户端开发工程师（AI-Native方向）', collected_dir: 'F:/tmp/b/已收集简历' },
   ];
   const rec = { record_id: 'r2', message_id: 'm2', attachment_id: 'a2', status: 'needs_resolution', errors: [] };
   const manifest = makeManifestWithRecord(rec);

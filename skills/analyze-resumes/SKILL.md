@@ -45,6 +45,11 @@ description: >
 
 ## 执行流程（5 阶段）
 
+**流水线化（5 阶段不彼此阻塞，2026-10-16 用户定稿）**：
+1. `collect-resumes` 的大件下载/rar 转包等长 IO 转后台跑；**已归档的个人立即进评估**（单份用 `extract_text.py` 提取→即派 judge），不等当日批次收齐。
+2. 滚动评估的产物（`{姓名}_评估.md/.json`）统一落 `notes/_eval_{M.DD}/`（评估明细唯一合法位置，与 output-template 引用约定一致；提取中间件留在 `notes/_extract_{M.DD}/`，报告禁止引用 `_extract_` 路径）。
+3. 批次收口时仍跑一次阶段1 的 `collect_and_extract.py --date` 做清点对账（补漏提取），再组装报告——滚动与收口两不误。
+
 ### 阶段1：提取文本（一条命令）
 
 ```bash
@@ -88,6 +93,8 @@ python "…/analyze-resumes/scripts/collect_and_extract.py" \
 
 ### 阶段3：逐份分析（子智能体并行评，主会话汇总）
 
+**大批次（≥5 人）默认走已存 workflow `resume-eval-pipeline`**（`CreateWorkflow saved:{name:"resume-eval-pipeline", args:{date, publish, remark}}`）：提取对账→逐人并行评估→同岗横向→组装→独立质检→finalize，全链自动编排；判据与脚本仍以本 skill 为唯一事实源，workflow 只是编排层。≤4 人小批次、或 workflow 不可用时，按本节流程主会话直接派。
+
 评估由定义式子智能体 **resume-judge** 执行（定义在 `~/.zcode/agents/resume-judge.md`）——**但 v3 切换期必须按下面的优先级派**：
 
 **⚠️ 派单优先级（2026-09-28 实测教训）**：
@@ -121,6 +128,7 @@ python "…/analyze-resumes/scripts/collect_and_extract.py" \
 `python "…/scripts/report_lint.py" <报告路径>`——机械校验四项：标题人数=卡片数、卡片岗位=所在章节岗位（防并行子卡贴错章节）、章节人数标注=实际卡片数、每章节有「归档位置」行+每卡有归档行。exit 1 先修复再发，不许跳过。
 
 - ⛔ **一天一批，只写一个文件（2026-09-17 晚班教训）**：`finalize_report.py` 固定读 `notes/简历评估/2026-{MM}/简历评估_{M.DD}.md`，**没有"晚班/第二批"概念**。同一天傍晚又来简历时，**并入同一份报告、人数累计**，**不要新建 `简历评估_9.17晚班.md`** —— 拆两份会让档位分发口径错乱且脚本读不到。
+- ⛔ **组装前先对齐当天全部归档变动（一次发布原则，2026-10-16 用户定稿）**：写报告前先查 manifest 当天记录 + 当天已有的挪岗/补归档/重投/排除，把变化以注记或卡片并入**本次**发布；发布后若发现遗漏需重发，重发前把全部已知变动一次并入，禁止发现一件补一件式反复 finalize（每次 finalize 都会生成新飞书文档+IM 转发，打扰收件人）。
 - **合并/改写报告时守住三个字段**（否则档位分发静默漏件，见 output-template 小节硬规则 4 的三条 ⛔）：① 归档 cell 标签必须是「**归档**」（不是「文件」）；② 路径必须是**归档根相对完整路径**（不是裸文件名）；③ 多材料用 `；` 分隔、路径旁不夹括号说明。
 
 

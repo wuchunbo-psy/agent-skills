@@ -37,6 +37,7 @@ node "…/scripts/collect.mjs" --max-age-minutes 30   # 同一时间段重复整
 - 下载 scope = 指定日（默认今天）∪ 近 7 天 verified 未下载（防深夜邮件/处理滞后滑进积压）；历史全量积压用 `--backlog`
 - 归档目录日期段 = **归档日规则推算**（2026-08-21 用户定稿：①19 点后收到算次日 ②周六/周日收到算下一个周一；`dates.mjs archiveDate()` 单一实现）。`received_at` 事实字段不变，collect 下载 scope 用原始日期宽口径防漏件
 - auto 解析有**失败缓存**：解析失败过的记录（`auto_failed_at`）不再每日重试（重试必然再失败）；汇总也不每日重刷。看全量失败用 `--auto --force`
+- **长 IO 后台化 + 与评估重叠（2026-10-16 用户定稿）**：大附件下载/rar 转包期间，collect 整体转后台执行，已归档的个人立即交 `analyze-resumes` 滚动评估（不等批次收齐）。⚠️ 后台仅限**单个** collect 实例——不得与第二个下载/合并任务并行（manifest 读改写互斥，见反模式）
 
 ## Agent 必做的人工环节（collect 汇总之后）
 
@@ -47,10 +48,11 @@ collect 只自动处理"唯一匹配"，以下决策归 Agent/用户：
    - 能确定岗位 → 单条 resolve（`--job` 传完整路径前缀）：
      ```
      node "…/scripts/resolve_records.mjs" --record <id> --name 张三 \
-       --job "项目B工作室/美术端/游戏UI设计师" --filename 张三_游戏UI设计师_5年.pdf
+       --job "长青工作室/美术端/游戏UI设计师" --filename 张三_游戏UI设计师_5年.pdf
      ```
      **判重机制（2026-09-15 盛明明事故后机制化，不靠 Agent 记忆）**：resolve 层**不再判重复**（附件 API 无 size 无 SHA，"同名同岗"判重是瞎猜，曾 4 次误杀：刘小六/苏树林/林秋钰/盛明明——BOSS 候选人把简历和作品分两封投、附件名完全相同）；resolve 遇同人同岗已归档只打 ⚠️ 警告并放行，**判重后移到下载层按 SHA 事实判定**：下载内容与同人同岗已归档文件 **SHA 相同**=真重发 → 自动标 `excluded/DUPLICATE_CONTENT`（⏭️ 正常退出）；**SHA 不同**=不同材料（简历+作品分投/更新版）→ 正常归档，target 同名冲突自动加 `_作品集`/`_2` 后缀改名。**Agent 无需预判"是不是重复"**——resolve 放行、下载闭环、看结果。`DUPLICATE_CONTENT` 与其他 `DUPLICATE_*`/`SAMEDAY_CONFLICT` 一样在 `--new-version` 重开白名单内。
      **⛔ 2026-09-16 补强（用户拍板："同文件名≈简历+作品两份材料，机制必须多检查一遍，不靠记忆"）**：①工具层——`--exclude`/`--exclude-mail` 对**从未下载（无 sha256）的记录打 DUPLICATE_*/SAMEDAY_* 排除码一律拒绝**（BOSS 附件元数据文件名按职位模板生成，两封邮件可完全同名，真实文件名只在 BOSS 聊天可见；林彩华/韩文帝/谢廷三起同款误杀的根源）；②存量重审——每日 collect 阶段3.5 自动跑 `reaudit_duplicates.mjs`：无下载证据的重复类排除 → 重新下载，**SHA 相同或 PDF 文本层逐字一致（同文档重导出）→ 维持排除并记录 `dupe_verified` 证据；不可证同 → 自动重开走正常归档**（>7 天收到的重开件需 collect --backlog 接手）。
+   **⛔ 不要把已归档件复制回 Downloads 伪装"用户手动下载"走复用**：归档件常经脱敏重打包，字节已与原附件不同，SHA 判重链路必断（重发件判不出重复，且 archived 终态不可再排除）；重发件宁可让下载层真下载一次，交给 SHA 事实判定。
    - **候选人是更新版简历**（同名同岗已归档、本次是补充AI版/新版）→ `--new-version` 重开归档，文件名加 `_补充AI版` 等后缀：
      ```
      node "…/scripts/resolve_records.mjs" --record <id> --name 张三 --job "…" \
@@ -74,7 +76,7 @@ collect 只自动处理"唯一匹配"，以下决策归 Agent/用户：
    嵌入 OCR 文本层后重跑闸门；`--name` 纠正 OCR 对生僻字的形近字误识。闸门的"提取阻断"本身是 warning 不阻断，目检通过即可放行。
 
    **⚠️ zip 内图片型简历（2026-09-08 高阳案例，09-20 机制已修一半）**：图片简历常叫 `简历.jpg/个人简历.png`（无姓名岗位词）——**09-20 起 `_is_resume_file` 对文件名含「简历/resume」的图片直接认作简历成员**：批次不再 STOP「没找到简历」、也不再静默判纯作品包🟢漏检（闸门会报「提取阻断」warning 强制人工知情）。**但闸门对图片不做 OCR 薪酬扫描**——凡 zip 内见到 `.jpg/.png` 命名含"简历"的成员，仍必须主动解出跑 `redact_image_salary.py` OCR 定位（无命中则目检/删临时件；命中则涂白后放回 zip 替换原成员），不能只看闸门绿了就交差。
-7. **冲突件视觉定名（2026-09-16 用户拍板升级）**：collect 阶段5.5 会对 `_2` 冲突后缀的归档件做内容定名——≥10 页或封面关键词的自动改名 `_作品集`；**单页/页数少/纯图/证据不足的渲染首页进 `notes/_label_queue/` 视觉队列**。Agent 必做：汇总出现"待视觉定名 N 个"时，Read 队列 PNG 亲眼看内容，然后 `node reaudit_duplicates.mjs --apply-label <record_id> --apply-verdict portfolio|resume` 落名（verdict=resume 且此前被误自动改名会自动改回 `_2`）。**页数规则不可靠（8年老简历能写满5页，卢容辉误判教训），看图才是终审**。
+7. **冲突件视觉定名（2026-09-16 用户拍板升级）**：collect 阶段5.5 会对 `_2` 冲突后缀的归档件做内容定名——≥10 页或封面关键词的自动改名 `_作品集`；**单页/页数少/纯图/证据不足的渲染首页进 `notes/_label_queue/` 视觉队列**。Agent 必做：汇总出现"待视觉定名 N 个"时，Read 队列 PNG 亲眼看内容，然后 `node reaudit_duplicates.mjs --apply-label <record_id> --apply-verdict portfolio|resume` 落名（verdict=resume 且此前被误自动改名会自动改回 `_2`）。**页数规则不可靠（8年老简历能写满5页，候选人V误判教训），看图才是终审**。
 
 ### 岗位→工作室归属核对（resolve 前必做）
 

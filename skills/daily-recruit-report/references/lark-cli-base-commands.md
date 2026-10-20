@@ -108,7 +108,7 @@ lark-cli base +record-upsert \
   --base-token YOUR_BASE_TOKEN \
   --table-id YOUR_TRACKING_TABLE_ID \
   --record-id recABC123 \
-  --json '{"岗位":"研发","部门":"项目C"}' \
+  --json '{"岗位":"研发","部门":"山海弹珠项目"}' \
   --as user
 ```
 

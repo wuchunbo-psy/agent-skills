@@ -382,7 +382,7 @@ async function labelConflicts(manifestPath) {
       let verdict = null;
       if (ext === '.pdf') {
         const fp = pdfFingerprint([file]).get(file);
-        if (fp && !fp.error && fp.pages >= 10) verdict = 'portfolio';          // 10 页以上≈作品集（8年老简历也能写满5页，卢容辉误判教训）
+        if (fp && !fp.error && fp.pages >= 10) verdict = 'portfolio';          // 10 页以上≈作品集（8年老简历也能写满5页，候选人V误判教训）
         else if (fp && !fp.error && fp.pages >= 2 && /portfolio|作品集|personal\s*design/i.test(fp.text.slice(0, 200))) verdict = 'portfolio';  // 封面关键词（前200字≈第1页）
       }
       if (verdict === 'portfolio') {

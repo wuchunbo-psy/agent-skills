@@ -46,7 +46,7 @@ const PENDING_SUFFIX = '_暂定';
 /**
  * 从归档根递归发现所有含"已收集简历"的岗位目录。
  * @returns {Array<{ job_dir: string, collected_dir: string }>}
- *   job_dir 是相对于 ARCHIVE_ROOT 的岗位路径（如 "项目C/美术端/特效设计师"）
+ *   job_dir 是相对于 ARCHIVE_ROOT 的岗位路径（如 "山海弹珠项目/美术端/特效设计师"）
  *   collected_dir 是绝对路径（如 .../特效设计师/已收集简历）
  */
 export function discoverJobDirs(root) {
@@ -92,9 +92,9 @@ export { normalizeJobName };
  * 按岗位名模糊匹配已发现的岗位目录。
  *
  * 匹配策略（fail-closed：疑似歧义就判 ambiguous，绝不静默选错）：
- *   0. 路径前缀匹配：jobName 含 '/'（如 "项目B工作室/美术端/游戏UI设计师"）
+ *   0. 路径前缀匹配：jobName 含 '/'（如 "长青工作室/美术端/游戏UI设计师"）
  *      → 优先按路径后缀精确匹配，消除跨工作室撞名歧义。
- *      （2026-08-06：8.05 把游戏UI设计师误归项目AUIUE的教训——
+ *      （2026-08-06：8.05 把游戏UI设计师误归坤灵UIUE的教训——
  *      Agent 传完整路径前缀时，绝不走模糊匹配）
  *   1. 精确匹配最后一级目录名（jobName === 末段）
  *   1b. 归一化精确匹配（去空格/横线，2026-08-13）：
@@ -105,7 +105,7 @@ export { normalizeJobName };
  *      近义歧义必须人工确认，因为岗位名常带引擎/方向前缀，错配=归错档。
  *   3. 无精确命中 → 包含匹配，多个则歧义。
  *
- * @param {string} jobName - 岗位名或路径前缀（如"特效设计师"或"项目B工作室/美术端/游戏UI设计师"）
+ * @param {string} jobName - 岗位名或路径前缀（如"特效设计师"或"长青工作室/美术端/游戏UI设计师"）
  * @param {array} jobDirs - discoverJobDirs 的结果
  * @returns {{ matched: array, ambiguous: boolean }}
  */
@@ -240,7 +240,7 @@ export function resolveRecord(manifest, recordId, name, jobName, filename, jobDi
   // 再归档只会让同批次出现重复人头、污染已评估档位。命中→标 duplicate 跳过下载。
   // 比对键：candidate_name + job_name（同岗同名即视为同人，talent_id 未绑定时这是最稳的判据）。
   // ⚠️ 2026-08-17 修复：job_name 口径不一是历史坑——早期归档存末级岗位名（"3D角色设计师"），
-  // resolve --job 传完整路径时新记录存完整路径（"项目B工作室/美术端/3D角色设计师"），
+  // resolve --job 传完整路径时新记录存完整路径（"长青工作室/美术端/3D角色设计师"），
   // 严格相等比对导致去重失效（谢平鑫 7.10 归档过、8.17 又归档一次没被拦）。
   // 比对前统一取末级名（岗位目录末级 = 岗位名，跨团队同名岗视为同人重复，--new-version 可覆盖）。
   const normJob = (j) => String(j || '').split('/').pop();
@@ -385,10 +385,10 @@ export function deriveTargetFilename(filename, name, job) {
  *
  * @returns {{ manifest, resolved: number, ambiguous: number, skipped: number, failures: [{id, name, reason}] }}
  */
-// 邮件主题「姓名-岗位」模式：候选人J-游戏ui / 候选人C_游戏UI_简历和作品集
+// 邮件主题「姓名-岗位」模式：候选人J-游戏ui / 陈韵印_游戏UI_简历和作品集
 // 前缀只跳装饰符和回复标记（可选），不得用 \w 类字符集（会误吃中文姓名首字）
 const SUBJECT_NAME_JOB_RE = /^(?:(?:回复|Fw|FW|Re)\s*[:：]?\s*)?[【\[\(（\s]*([\u4e00-\u9fa5A-Za-z·]{2,4})\s*[-_－—]\s*(.+)$/;
-// 「岗位 姓名」倒序模式：3D动作 候选人L个人作品以及简历（姓名后必须跟边界词，防贪婪吃字）
+// 「岗位 姓名」倒序模式：3D动作 王子谦个人作品以及简历（姓名后必须跟边界词，防贪婪吃字）
 const SUBJECT_JOB_NAME_RE = /^(3D动作|2D动作|游戏UI|特效|Unity客户端|U3D|客户端|服务端)\s+([\u4e00-\u9fa5]{2,4})(?=个人|的|简历|作品|求职|应聘|$|\s)/;
 
 function parseNameJobFromSubject(subject) {

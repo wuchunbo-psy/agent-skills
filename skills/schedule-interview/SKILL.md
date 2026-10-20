@@ -28,7 +28,7 @@ AI 做：自然语言 → 脚本参数（无损转译，一次）；按交付契
 
 | 要素 | 规则 |
 |---|---|
-| 面试官 | 用户口头给；"A或者B"= OR 池传 `A\|B`，"A和B都要参加"= AND 传 `A,B`；昵称（面试官B/Cloud/杰哥等）直接传，按 interviewers.json 的 name/alias/email 前缀解析 |
+| 面试官 | 用户口头给；"A或者B"= OR 池传 `A\|B`，"A和B都要参加"= AND 传 `A,B`；昵称（Sava/Cloud/杰哥等）直接传，按 interviewers.json 的 name/alias/email 前缀解析 |
 | 候选人 + 可面时间 | 用户口头给；没给时间的候选人直接写姓名（脚本自动按"明天起 3 个工作日全天"窗口，交付时向用户点明是代拟） |
 | 形式 | 默认 `视频`；用户明确说"线下"才传 `--form 线下` |
 
@@ -97,10 +97,11 @@ python "…/schedule-interview/scripts/match_schedule.py" \
   - 画布宽 = 时间轴区动态计算（viewBox 硬编码旧值会导致右侧裁切、窄块放不下两行标）
   - 图上文案改一处须全 grep：副标题等在 `--svg`/`--png`/`--html` 三个分支独立构造
 - 草稿文本放代码块（纯转发文本，复制即发）。多组则逐人（逐图逐稿）
+- **候选人链接随草稿一并交付（2026-10-14，排版用户定稿）**：脚本输出末尾 `=== 候选人链接 ===` 段，**每人两行——姓名行 + 纯链接行，链接顶格独占一行**（URL 同 open_interview_dialog.py：`https://mini1.feishu.cn/hire/talent/{talent_id}`；lookup 来源带 `?application_id=` 定位具体投递，快照/`--talent-ids` 直跑为裸链接）。**交付时把这段原样放进代码块**——用户三击整行选中复制即得干净 URL；禁 markdown 链接语法（渲染后复制不出纯 URL）、禁「姓名： URL」同行混排（复制带前缀，发 IM 还降级纯文本）。用户转发面试官时按 AGENTS 飞书铁律单独一条消息发纯链接。链接不塞进可转发草稿文本
 - **交付前数人数**：草稿候选人块数 = 应排人数。被挤掉/未排上的人看编排器分配说明或输出【不可约】段，按 ❌ 提示调整
 - 拟安排时段冒出新增忙块 → 先核实是否已建场再动（编排器已自动剔除；直跑 match_schedule 需人工核），勿当新冲突重排
 - 草稿含 `【需问用户】` → 问用户补齐后手改；用户说改时间 → 重跑命令
-- 脚本输出五段（忙碌/空闲/ATS/匹配/草稿+不可约）皆可溯源：忙碌段与飞书日历对不上 = 日程变了，重跑
+- 脚本输出六段（忙碌/空闲/ATS/匹配/草稿+不可约+候选人链接）皆可溯源：忙碌段与飞书日历对不上 = 日程变了，重跑
 
 ### 6. 建面试弹窗预开（可选，用户发话才做）
 
@@ -163,7 +164,7 @@ python "<skill>/scripts/open_interview_dialog.py" 候选人A 候选人B   # --dr
 |---|---|
 | 项目根 | `<PROJECT_ROOT>` |
 | lark-cli | `LARK_CLI_PATH`（subprocess 全路径，否则 WinError 2） |
-| 面试官缓存 | `<PROJECT_ROOT>/notes/interviewers.json`（契约：name/alias[]/email 前缀 → open_id；`alias[0]`=草稿称谓；编排器自动维护——只补空缺 alias，真绰号/英文名（面试官B/同事 等）不机器推导，推导结果撞存量 alias 回退姓+哥） |
+| 面试官缓存 | `<PROJECT_ROOT>/notes/interviewers.json`（契约：name/alias[]/email 前缀 → open_id；`alias[0]`=草稿称谓；编排器自动维护——只补空缺 alias，真绰号/英文名（Sava/Tina 等）不机器推导，推导结果撞存量 alias 回退姓+哥） |
 | ATS 数据源 | `<PROJECT_ROOT>/notes/_daily_review.json`（daily-recruit-report 产出；当天新录入走编排器 lookup 兜底） |
 | 编排结果 | `<PROJECT_ROOT>/notes/_drafts_result.txt`（每次覆盖） |
 | 核心脚本 | `scripts/draft_interviews.py`（编排入口）；`scripts/match_schedule.py`（单组引擎）；`scripts/lookup_candidates.py`；`scripts/show_availability.py`；`scripts/svg2png.js`（SVG→PNG 3x 渲染，`--png` 自动调用）；`scripts/open_interview_dialog.py` |

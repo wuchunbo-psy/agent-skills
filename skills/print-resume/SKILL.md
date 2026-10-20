@@ -19,9 +19,9 @@ agent 收到打印请求后直接跑此命令，脚本自决：定位文件 → 
 >
 > 另：若 bash 报 `dirname/head/tail: command not found`（PATH 缺 coreutils），命令前先 `export PATH="~/.workbuddy/binaries/PortableGit/versions/1.2.0/usr/bin:$PATH"`。
 
-> **⚠️ 只打现场面试（2026-09-08 用户定稿）**：视频面试不用打印简历（面试官在屏幕上看）。打印前先核对面试形式——查 `notes/_daily_review.json` 的 `structured.today_interviews[*].interview_type`：`现场面试`才打，`视频面试`跳过。用户说「打印一下」指的通常只是当天/最近的现场面试候选人，别把视频场一起打了。
+> **面试形式不设限（2026-10-15 用户改规则，废除 9-08「只打现场」）**：现场/视频面试都照打，收到打印请求直接执行，**不用**再查 `interview_type` 拦视频场。用户说「打印一下」通常指当天/最近一场的候选人。兜底来源（ATS 原件/用户手下的 docx 等）必须走转 PDF + 薪酬脱敏扫描后才打印，这条与面试形式无关、始终生效。
 
-**定位兜底链（2026-09-08 新增，起因=李菲只有 zip 包、刘青从未归档，两条当时各绕了十步手工调查）**：归档库 PDF → ① 归档库 zip 作品包（自动解出「简历」成员）→ ② 飞书招聘 ATS（talent_id 取值优先级：`--talent-id` > 今日面试名单 > 人才缓存，缓存同名多条 fail-closed 让人挑；拉名下最新简历附件）。兜底来源不保证脱敏态：脚本统一跑薪酬扫描，命中自动调 collect-resumes 的 redact_salary.py 白覆盖；老版 `.doc` 附件自动走 WPS COM 转 PDF（Word COM 不可用、LibreOffice 未装，WPS 是本机唯一活路；PS1 及其引用路径必须纯 ASCII，PowerShell 5.1 无 BOM 按 ANSI 读）。
+**定位兜底链（2026-09-08 新增，起因=李菲只有 zip 包、刘青从未归档，两条当时各绕了十步手工调查）**：归档库 PDF → ① 归档库 zip 作品包（自动解出「简历」成员；**包内零文档=纯视频/图片作品包时自动落②**，2026-10-15 胡锦程案例修复；包内有文档但认不出简历本体仍 fail-closed 让人挑）→ ② 飞书招聘 ATS（talent_id 取值优先级：`--talent-id` > 今日面试名单 > 人才缓存，缓存同名多条 fail-closed 让人挑；拉名下最新简历附件）。兜底来源不保证脱敏态：脚本统一跑薪酬扫描，命中自动调 collect-resumes 的 redact_salary.py 白覆盖；老版 `.doc` 附件自动走 WPS COM 转 PDF（Word COM 不可用、LibreOffice 未装，WPS 是本机唯一活路；PS1 及其引用路径必须纯 ASCII，PowerShell 5.1 无 BOM 按 ANSI 读）。
 
 ## 事实表
 

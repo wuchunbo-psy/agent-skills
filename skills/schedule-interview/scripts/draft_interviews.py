@@ -75,7 +75,7 @@ def resolve_member(cache, token):
 def derive_alias(token, info, taken=None):
     """称谓惯例（2026-09-02 改版，用户定稿）：英文名直接用（首字母大写）；
     两字中文名=末字+哥（王芳→芳哥）；三字及以上=末两字不带哥（王大明→大明）。
-    taken=存量 alias 集合（小写），推导结果撞车时回退「姓+哥」（李杰→李哥，不与王杰杰哥撞）。"""
+    taken=存量 alias 集合（小写），推导结果撞车时回退「姓+哥」（李杰→李哥，不与张杰杰哥撞）。"""
     taken = taken or set()
     if re.search(r"[A-Za-z]", token):
         return token[0].upper() + token[1:]

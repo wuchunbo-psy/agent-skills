@@ -302,19 +302,23 @@ def locate_by_name(name, talent_id):
     if len(zhits) == 1:
         print(f"📦 归档无独立 PDF，命中作品包：{zhits[0]}")
         member, cand = resume_from_zip(zhits[0])
-        if member is None:
+        if member is None and cand:
+            # 包里有文档但认不出简历本体：简历多半就在包里，自动落 ATS 可能打错附件，fail-closed
             print(f"❓ 包内 {len(cand)} 个文档拿不准哪个是简历本体：")
             for i, m in enumerate(cand, 1):
                 print(f"   [{i}] {m}")
             fail("用 --pdf 先解压再指定路径。")
-        if not member.lower().endswith(".pdf"):
-            member = wps_to_pdf(member, name)
-        redact_check(member)
-        segs = os.path.normpath(zhits[0]).replace("\\", "/").split("/")
-        label = None
-        if "已收集简历" in segs and segs.index("已收集简历") > 0:
-            label = f"{segs[segs.index('已收集简历') - 1]}_{name}"
-        return member, label
+        if member is not None:
+            if not member.lower().endswith(".pdf"):
+                member = wps_to_pdf(member, name)
+            redact_check(member)
+            segs = os.path.normpath(zhits[0]).replace("\\", "/").split("/")
+            label = None
+            if "已收集简历" in segs and segs.index("已收集简历") > 0:
+                label = f"{segs[segs.index('已收集简历') - 1]}_{name}"
+            return member, label
+        # 包内零文档（纯视频/图片作品包，如胡锦程_作品视频.zip 只有 mp4）：简历铁定不在包里，落 ATS 兜底②
+        print("📭 包内无 pdf/doc/docx 简历文档（纯作品包），继续 ATS 兜底")
 
     # 兜底②：ATS（从未走过本地归档管线的人，如业务直接在飞书招聘建的档）
     return ats_locate(name, talent_id), f"{name}(ATS简历)"

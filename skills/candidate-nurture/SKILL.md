@@ -153,8 +153,8 @@ python "…/candidate-nurture/scripts/nurture_state.py" --stale
 |------|------|---------|----------|----------|
 | **① 邀约未落地** | 业务说约但没约成 | 你自己 | 录入ATS+约时间 | signals type=invite, ats_landed=false |
 | **② 面试欠面评** | 面完了面试官没交 | **面试官** | 催面试官（不是碰候选人）| feedback_overdue（候选人视角）+ interviewer_feedback_debt（面试官聚合，重欠升级用）|
-| **③ 面评通过待推进** | 面评过了流程没动 | 你自己/上级 | 推进下一轮 or 走offer | to_advance |
-| **④ offer 推进卡住** | 业务确认offer但ATS没转 | 上级/同事 | 催上级/同事+保温候选人 | signals type=invite + stage=面试+终试通过 |
+| **③ 面评通过待推进** | 面评过了流程没动 | 你自己/Bruce | 推进下一轮 or 走offer | to_advance |
+| **④ offer 推进卡住** | 业务确认offer但ATS没转 | Bruce/Tina | 催Bruce/Tina+保温候选人 | signals type=invite + stage=面试+终试通过 |
 | **⑤ 待入职流失风险** | 接了offer没入职 | HR/入职流程 | 确认入职+保温 | stage=待入职/Offer沟通 |
 | **⑥ 长期停滞需决策** | 卡30天+没动静 | 业务方决策 | 问业务"还推不推" | stuck dwell≥30 或 to_advance dwell≥30 |
 | **⑦ 暗坑待核查** | 面试阶段零记录 | 未知 | 去ATS核查 | stuck reason含"⚠️零记录" |
@@ -166,7 +166,7 @@ python "…/candidate-nurture/scripts/nurture_state.py" --stale
 排序优先级（从高到低）：
 ```
 第一梯队（今天必须做——不做会丢人/丢流程）：
-  Q1. ④ offer推进卡住（blocker=上级/同事）—— 竞品挖角窗口，每多拖一天流失概率飙升
+  Q1. ④ offer推进卡住（blocker=Bruce/Tina）—— 竞品挖角窗口，每多拖一天流失概率飙升
   Q2. ② 面评欠收≥14天（urgency=🔴严重）—— 候选人面完两周没消息，快凉了
   Q3. ④/③ 业务确认推进但表漂移 —— 数据不一致会持续误报
   Q4. ⑦ 暗坑待核查（零记录≥7天）—— 最容易漏的人
@@ -246,7 +246,7 @@ python "…/candidate-nurture/scripts/nurture_state.py" --stale
 1. **"哪怕没有任何进展也发"**——2-3天级别的话术核心价值是"HR没消失"，不是传递新信息
 2. **拖一周以上必须给信息量**——不能一直重复"还在流程中"，要说清楚卡在哪个环节（审批/评估/协调），候选人知道为什么慢，焦虑会少很多
 3. **只同步事实，不解读原因**——别说"可能是因为XX"，只说"目前在XX环节"
-4. **保温和催 action 是两件事**——offer卡住的人既要催上级（action）也要保温候选人（让他知道在推进），两件事都做
+4. **保温和催 action 是两件事**——offer卡住的人既要催Bruce（action）也要保温候选人（让他知道在推进），两件事都做
 
 ---
 
@@ -261,11 +261,11 @@ python "…/candidate-nurture/scripts/nurture_state.py" --stale
 
 第一梯队：今天必须做（不做会丢人/丢流程）
 
-Q1. 🔴 [④offer卡住] 候选人I — 终试通过27天，上级已确认推进offer但ATS没转
-    blocker：上级+同事
-    → 动作：私聊上级催offer进度
-    → 话术：上级，候选人I的offer流程目前推进到哪一步了？薪酬信息已经发过了，候选人那边在等结果，方便同步进度吗？
-    → 同时保温候选人：候选人I你好，面试流程已全部走完，目前在推进offer审批环节，有进展第一时间同步你，感谢耐心等待🙏
+Q1. 🔴 [④offer卡住] 刘弘毅 — 终试通过27天，Bruce已确认推进offer但ATS没转
+    blocker：钟波(Bruce)+Tina
+    → 动作：私聊Bruce催offer进度
+    → 话术：Bruce，刘弘毅的offer流程目前推进到哪一步了？薪酬信息已经发过了，候选人那边在等结果，方便同步进度吗？
+    → 同时保温候选人：刘弘毅你好，面试流程已全部走完，目前在推进offer审批环节，有进展第一时间同步你，感谢耐心等待🙏
 
 Q2. 🔴 [②欠面评🔴严重] 裴偲宇 — 初试6-26，涂萍欠面评18天
     blocker：涂萍
@@ -292,7 +292,7 @@ Q9. 🟡 [⑥长期停滞] 刘镇涛 — 面评通过42天没推进
 **队列产出规则**：
 1. **每条必须标 blocker**——没标 blocker = 没分析到位，blocker=未知 时标"需核查"
 2. **同 blocker 合并**——同一面试官欠多人面评、同一业务方卡多个offer，合并成一条
-3. **action 和保温分开标**——offer卡住的人既标"催上级"(action)又标"保温候选人"，两件事
+3. **action 和保温分开标**——offer卡住的人既标"催Bruce"(action)又标"保温候选人"，两件事
 4. **30天+的不盲目保温**——先在 Q9 确认"还推不推"，决策后再定是否保温
 5. **末尾附全员保温节奏表**——所有在途候选人按节奏级别（D0/2-3天/3-5天/拖一周以上）归类，确保没人被遗忘
 

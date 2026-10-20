@@ -25,7 +25,7 @@
 
 **信息源（自动发现，不硬编码）**：
 - **群**：脚本调 `discover_recruit_chats()` 自动发现招聘相关群，排除 external=true 的外部社群（HR 社区等噪声）
-- **私聊 + 系统通知**：上级 私聊 `oc_37218905e0782cfd5f239b5106162fe0`（决策指令最密集）、飞书招聘通知 `oc_eceb45fc66a90be574089b72ffca7565`（面试反馈/接受/未到场卡片）
+- **私聊 + 系统通知**：钟波(Bruce) 私聊 `oc_37218905e0782cfd5f239b5106162fe0`（决策指令最密集）、飞书招聘通知 `oc_eceb45fc66a90be574089b72ffca7565`（面试反馈/接受/未到场卡片）
 
 **输出 `notes/_daily_review.json`**：数据契约见 [`references/review-contract.md`](references/review-contract.md)（字段名、消费者约定的单一真相源）。改 `_daily_review.py` 输出结构必须同步改契约。
 
