@@ -358,7 +358,7 @@ class TestImageResumeRecognition(unittest.TestCase):
 
 
 class TestScatterDetectionAllPaths(unittest.TestCase):
-    """2026-09-22 散件检测扩全路径 + 文件名关键词判定（周洁/李阳盲区回归）。"""
+    """2026-09-22 散件检测扩全路径 + 文件名关键词判定（候选人05/李阳盲区回归）。"""
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -381,10 +381,10 @@ class TestScatterDetectionAllPaths(unittest.TestCase):
         return rc, stdout_capture.getvalue()
 
     def test_scatter_non_art_path_stops(self):
-        """非美术端路径：同人简历pdf+作品集pdf → STOP（周洁盲区回归）。"""
+        """非美术端路径：同人简历pdf+作品集pdf → STOP（候选人05盲区回归）。"""
         d, t = self._batch()
-        make_text_pdf(os.path.join(t, "周洁_交互设计师_3年.pdf"), "resume text")
-        make_text_pdf(os.path.join(t, "周洁_交互设计师_3年_作品集.pdf"), "portfolio works")
+        make_text_pdf(os.path.join(t, "候选人05_交互设计师_3年.pdf"), "resume text")
+        make_text_pdf(os.path.join(t, "候选人05_交互设计师_3年_作品集.pdf"), "portfolio works")
         rc, out = self._run(d)
         self.assertEqual(rc, 1, f"非美术端散件必须 STOP。\n{out}")
         self.assertIn("同人散件未打包", out)
@@ -418,9 +418,9 @@ class TestScatterDetectionAllPaths(unittest.TestCase):
         self.assertNotEqual(rc, 1, f"跨批次 warning 不应 STOP。\n{out}")
 
     def test_loose_video_stops(self):
-        """散视频与简历并存 → STOP「视频散件未打包」（2026-09-23 视频打包规则，曾扬形态）。"""
+        """散视频与简历并存 → STOP「视频散件未打包」（2026-09-23 视频打包规则，候选人12形态）。"""
         d, t = self._batch()
-        make_text_pdf(os.path.join(t, "曾扬_3D动作_2年.pdf"), "resume text")
+        make_text_pdf(os.path.join(t, "候选人12_3D动作_2年.pdf"), "resume text")
         open(os.path.join(t, "冲撞.mp4"), "wb").close()
         rc, out = self._run(d)
         self.assertEqual(rc, 1, f"散视频必须 STOP。\n{out}")
@@ -429,8 +429,8 @@ class TestScatterDetectionAllPaths(unittest.TestCase):
     def test_video_zip_with_resume_passes(self):
         """{姓名}_作品视频.zip 与简历并存 → 合规终态，不 STOP（视频包进合集豁免）。"""
         d, t = self._batch()
-        make_text_pdf(os.path.join(t, "曾扬_3D动作_2年.pdf"), "resume text")
-        with zipfile.ZipFile(os.path.join(t, "曾扬_作品视频.zip"), "w") as z:
+        make_text_pdf(os.path.join(t, "候选人12_3D动作_2年.pdf"), "resume text")
+        with zipfile.ZipFile(os.path.join(t, "候选人12_作品视频.zip"), "w") as z:
             z.writestr("冲撞.mp4", b"\x00" * 16)
         rc, out = self._run(d)
         self.assertNotEqual(rc, 1, f"视频包+简历是合规形态，不应 STOP。\n{out}")

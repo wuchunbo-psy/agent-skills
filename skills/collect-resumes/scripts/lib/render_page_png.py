@@ -4,7 +4,7 @@
 用法:
     python render_page_png.py <pdf> <out.png> [max_width]
 
-长图单页自动按 max_width 缩放（韩文帝 8640pt 巨图教训：不缩会出几十 MB 大图）。
+长图单页自动按 max_width 缩放（候选人08 8640pt 巨图教训：不缩会出几十 MB 大图）。
 """
 import json
 import sys

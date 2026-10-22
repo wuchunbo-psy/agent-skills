@@ -509,7 +509,7 @@ function main() {
   // 替代手改 manifest JSON。--code 用结构化原因码（见 SKILL.md 约定）。
   // ⚠️ 2026-09-16 机制化（用户拍板）：重复类排除码对"从未下载（无 sha256）"的记录一律拒绝。
   // BOSS 附件元数据文件名按职位模板生成，简历/作品集可完全同名——"同文件名"大概率是
-  // 简历+作品两份材料而非重发（林彩华/韩文帝/谢廷三起误杀根源）。判重只能由下载层按
+  // 简历+作品两份材料而非重发（候选人07/候选人08/候选人09三起误杀根源）。判重只能由下载层按
   // 内容 SHA 判定；历史误杀用 reaudit_duplicates.mjs 重审。
   const DUP_EXCLUDE_RE = /^(DUPLICATE|SAMEDAY)/;
   const refuseUnverifiedDup = (rec, code) => {

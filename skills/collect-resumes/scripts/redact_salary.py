@@ -35,6 +35,7 @@ except ImportError:
 from salary_pattern import SALARY
 from paths import SEVEN_ZIP
 from archive_safety import check_zip, decode_zip_name, MAX_SINGLE_FILE_MEDIA
+from content_extractors import image_dominant_pages  # 按页图像主导检测（与闸门单一事实源）
 
 # 白色覆盖（铁律：禁止黑色）
 FILL_COLOR = (1, 1, 1)
@@ -49,8 +50,8 @@ def redact_pdf(pdf_path, patterns=None, dry_run=False, ocr_pages=None):
     """脱敏 PDF：用白色矩形覆盖薪酬文本。
     返回 (命中数, 是否修改)。
 
-    自动检测图片型/BOSS加密文本层：当文本层提取不到薪酬且页面有图片时，
-    fallback 到 OCR 路径（渲染页面→OCR定位薪酬像素bbox→反推PDF坐标→白矩形覆盖）。
+    自动按页检测图像主导页（image_dominant_pages）：文本层提取不到薪酬且存在
+    图片主导页时，fallback 到 OCR 路径（渲染页面→OCR定位薪酬像素bbox→反推PDF坐标→白矩形覆盖）。
     ocr_pages：图片型 PDF 的 OCR 页数上限（None=默认前3页，0=全页）。
     """
     doc = fitz.open(pdf_path)
@@ -98,37 +99,11 @@ def redact_pdf(pdf_path, patterns=None, dry_run=False, ocr_pages=None):
 
 
 def _is_image_pdf(doc):
-    """检测是否是图片型 PDF：文本层字符少 或 页面以图片为主。
-
-    2026-09-03：有足量可读中文（≥200字）的文档不再判为图片型。
-    半加密 BOSS PDF（姓名token化但经历可读）的可读文本层已被文本路径全量扫过，
-    再走 OCR 纯属白跑——实测一批 6 份 BOSS 简历每份多耗几十秒（模型加载+渲染
-    3页+OCR），命中全 0。全加密/纯图片型文档可读中文≈0，仍走 OCR（薪酬可能
-    只在渲染层可见）。
-    """
-    cjk = 0
-    total_text_len = 0
-    for page in doc:
-        t = page.get_text()
-        total_text_len += len(t.strip())
-        for ch in t:
-            if '\u4e00' <= ch <= '\u9fff':
-                cjk += 1
-                if cjk >= 200:
-                    return False
-    if total_text_len < 50:  # 几乎无文本 → 扫描件/纯图片
-        return True
-    # 检查是否有 BOSS token 行（文本层是乱码）
-    for page in doc:
-        text = page.get_text()
-        lines = [l for l in text.split("\n") if l.strip()]
-        if lines:
-            token_like = sum(1 for l in lines
-                             if not re.search(r"[\u4e00-\u9fff]", l)
-                             and (re.match(r"^[0-9a-f]{8,}", l) or "~~" in l))
-            if token_like / len(lines) > 0.5:
-                return True
-    return False
+    """[已废弃 2026-10-22] 文档级图片型判定有结构性盲区：50~200 字符文本层的混合型
+    （候选人13案：整页图简历 79 字文本层逃过 <50 纯图片线）和前文本后图片的合订本
+    （候选人14案 31 页）都判不了。由 content_extractors.image_dominant_pages 按页判定取代，
+    见 redact_pdf / _redact_pdf_via_ocr。保留函数名防外部引用断裂，调用即按新口径走。"""
+    return bool(image_dominant_pages(doc))
 
 
 def _get_ocr_engine():
@@ -216,18 +191,20 @@ def _pixel_to_pdf_rect(pixel_bbox, img_width, img_height, page_rect):
 
 
 def _redact_pdf_via_ocr(pdf_path, patterns=None, dry_run=False, ocr_pages=None):
-    """图片型/BOSS加密 PDF 的 OCR 脱敏路径。
+    """图像主导页（图片简历/混合型/BOSS加密）的 OCR 脱敏路径。
 
-    1. 检测是否图片型（不是则返回空，让上层走正常文本路径）
+    1. 按页识别图像主导页（image_dominant_pages，与闸门共用；无则返回空走文本路径——
+       BOSS 半加密 token PDF 全是文本页，自然零 OCR，保留 2026-09-03 提速成果）
     2. 获取 OCR 引擎（easyocr/pytesseract），无可用引擎则渲染图片提示主会话处理
-    3. 渲染前 ocr_pages 页→OCR定位薪酬→像素bbox反推PDF坐标→白色覆盖
+    3. 渲染前 ocr_pages 个图像主导页→OCR定位薪酬→像素bbox反推PDF坐标→白色覆盖
 
-    2026-08-20：只查前 N 页（默认3）。图片型作品集 PDF 动辄几十页（08-19 吴雨坤72页
+    2026-08-20：只查前 N 页（默认3）。图片型作品集 PDF 动辄几十页（08-19 候选人0372页
     逐页OCR跑15分钟未完），薪酬只出现在简历信息页（前几页），后续是作品图无薪酬字段。
     需要全页扫时 --ocr-pages 0。
     """
     doc = fitz.open(pdf_path)
-    if not _is_image_pdf(doc):
+    dominant = image_dominant_pages(doc)
+    if not dominant:
         doc.close()
         return [], False
 
@@ -248,10 +225,10 @@ def _redact_pdf_via_ocr(pdf_path, patterns=None, dry_run=False, ocr_pages=None):
     tmpdir = tempfile.mkdtemp(prefix="_redact_ocr_")
 
     try:
-        pages_to_scan = len(doc) if ocr_pages == 0 else min(len(doc), ocr_pages if ocr_pages else 3)
-        if pages_to_scan < len(doc):
-            print(f"  ℹ️ 图片型PDF共{len(doc)}页，只OCR前{pages_to_scan}页（简历信息页；全页扫用 --ocr-pages 0）")
-        for page_num in range(pages_to_scan):
+        pages = dominant if ocr_pages == 0 else dominant[:ocr_pages if ocr_pages else 3]
+        if len(pages) < len(dominant):
+            print(f"  ℹ️ 图像主导页共{len(dominant)}页，只OCR前{len(pages)}页（简历信息页；全扫用 --ocr-pages 0）")
+        for page_num in pages:
             page = doc[page_num]
             # 美术作品集常见超长图拼页（如1080x24851pt），满 DPI 渲染会超 PIL
             # DecompressionBomb 上限（约1.79亿像素）直接崩；按面积自动降 zoom
@@ -388,7 +365,7 @@ def redact_zip(zip_path, patterns=None, dry_run=False):
                 norm = real_name.replace("\\", "/")
                 if "__MACOSX/" in norm or os.path.basename(norm).startswith("._"):
                     continue
-                # Office 锁文件（~$xxx.docx，58字节非文档，2026-09-29 许正阳 rar 案致 BadZipFile 崩溃）
+                # Office 锁文件（~$xxx.docx，58字节非文档，2026-09-29 候选人01 rar 案致 BadZipFile 崩溃）
                 if os.path.basename(norm).startswith("~$"):
                     continue
                 target = os.path.join(tmpdir, real_name.replace("\\", "/"))
@@ -566,7 +543,7 @@ def redact_rar(rar_path, patterns=None, dry_run=False, output=None):
             print(f"❌ RAR 安全检查失败（拒绝解压）: {bad}", file=sys.stderr)
             return [("__BLOCKED__", bad)], False, None
 
-        # 7z 解压（排除 Office 锁文件 ~$*：非文档临时件，2026-09-29 许正阳 rar 案致 BadZipFile 崩溃）
+        # 7z 解压（排除 Office 锁文件 ~$*：非文档临时件，2026-09-29 候选人01 rar 案致 BadZipFile 崩溃）
         r = subprocess.run(
             [SEVEN_ZIP, "x", rar_path, f"-o{tmpdir}", "-y", "-xr!~$*"],
             capture_output=True, timeout=300
@@ -602,7 +579,7 @@ def redact_rar(rar_path, patterns=None, dry_run=False, output=None):
         # 重打包为 zip（rar 转 zip，即使无薪酬也转）
         out_path = None
         if not dry_run:
-            # 超大成员护栏（2026-09-29 刘新榕 2.3GB avi 案）：zip 单成员上限 2GB，
+            # 超大成员护栏（2026-09-29 候选人10 2.3GB avi 案）：zip 单成员上限 2GB，
             # 含超大成员的包转 zip 会在闸门安全检查必死循环。此时保留原 rar/7z 不转——
             # 闸门对 .rar/.7z 走最小安全检查（无单成员上限），可正常通过。
             oversized = []

@@ -93,7 +93,8 @@ python "…/analyze-resumes/scripts/collect_and_extract.py" \
 
 ### 阶段3：逐份分析（子智能体并行评，主会话汇总）
 
-**大批次（≥5 人）默认走已存 workflow `resume-eval-pipeline`**（`CreateWorkflow saved:{name:"resume-eval-pipeline", args:{date, publish, remark}}`）：提取对账→逐人并行评估→同岗横向→组装→独立质检→finalize，全链自动编排；判据与脚本仍以本 skill 为唯一事实源，workflow 只是编排层。≤4 人小批次、或 workflow 不可用时，按本节流程主会话直接派。
+**一律主会话直接派（原流程，2026-10-20 用户拍板恢复）**：提取对账后按人并行 dispatch `resume-judge`（大批次一次派完），主会话保留：对账防漏人、**同岗口径拉齐**（同岗 2 人以上时组装前把各卡档位/先问互相对一遍，防同情形不同档）、报告组装、lint、finalize。
+⛔ **不要跑 `resume-eval-pipeline` workflow**——2026-10-20 实测 7 人 80 分钟（评估本体仅 14 分钟，校准 24+组装 14+质检+修复约 28），且派发层按过期 `_my_jobs.json` 定岗把重投件误拦进兜底区（10.19 同型误报再现）；用户结论「又慢又没用，还不如原来的流程」。workflow 仅留存档，不进默认路径，不因"批次大"启用。
 
 评估由定义式子智能体 **resume-judge** 执行（定义在 `~/.zcode/agents/resume-judge.md`）——**但 v3 切换期必须按下面的优先级派**：
 

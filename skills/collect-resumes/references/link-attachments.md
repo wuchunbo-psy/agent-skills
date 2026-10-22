@@ -65,9 +65,9 @@ const { chromium } = require('playwright');
 
 ### ⚠️ 163 超大附件（mail.163.com/large-attachment）：batch_download_links 必失败，走长等待脚本
 
-2026-09-08 高阳 66.6MB 实测：163「普通下载」点击后有**等待倒计时，40s+ 才触发 download 事件**，batch_download_links 固定等 15s → headless/有头都必 timeout。链接本身 HTTP 200 未失效（页面显示文件名/大小/剩余有效期，无需登录）。
+2026-09-08 候选人06 66.6MB 实测：163「普通下载」点击后有**等待倒计时，40s+ 才触发 download 事件**，batch_download_links 固定等 15s → headless/有头都必 timeout。链接本身 HTTP 200 未失效（页面显示文件名/大小/剩余有效期，无需登录）。
 
-诊断方法（先查实再动手）：临时 playwright 脚本 `goto → wait 6s → body.innerText`——能看到「高阳简历+作品.rar / 66.6MB / N天后到期 / 普通下载 / 极速下载」就是有效，直接进下一步。
+诊断方法（先查实再动手）：临时 playwright 脚本 `goto → wait 6s → body.innerText`——能看到「候选人06简历+作品.rar / 66.6MB / N天后到期 / 普通下载 / 极速下载」就是有效，直接进下一步。
 
 下载脚本（一次性，用完删；核心是 `waitForEvent('download', {timeout:180000})` 而不是轮询）：
 
